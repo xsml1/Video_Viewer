@@ -3,12 +3,12 @@
 ## 2026-09-27：单路标注、八种界面语言与公开源码
 
 - 当前任务范围：图像/视频导出标注可按笔选择联动全部画面或仅起笔画面；设置拆分主题与语言，语言名称始终按各自语言显示，增加繁体中文和六种常用外语；完成 README 并将项目源码推送到用户指定 GitHub 仓库。
-- 当前里程碑：功能源码、本机真实显示器与 Windows 文件夹包已验证；公开仓库推送执行中。异机 A22、真实跨屏高 DPI A10 仍未验证。
-- 代码状态/分支/提交或未提交变更：本机 `master` 暂无提交；`src/**/*.py` 43 文件摘要 `2DB84E77F33CA66A767B2782D53316F06C23120AB838B8FCA2F942E528951350`。新包 `dist/VideoCompare.dist/main.exe` SHA-256 `4C32DF23E409A4B32E146029B4403DE8E488076383857C6F83FF51CB0E6EE0B5`。Git 提交与远端状态以本节后续记录为准。
+- 当前里程碑：功能源码、本机真实显示器与 Windows 文件夹包已验证；公开仓库 `https://github.com/xsml1/Video_Viewer` 的 `main` 分支已推送。异机 A22、真实跨屏高 DPI A10 仍未验证。
+- 代码状态/分支/提交或未提交变更：本机 `main` 与 `origin/main`；项目初始提交 `8d22f71` 已推送，文档更新见后续 Git 历史。`src/**/*.py` 43 文件摘要 `2DB84E77F33CA66A767B2782D53316F06C23120AB838B8FCA2F942E528951350`。新包 `dist/VideoCompare.dist/main.exe` SHA-256 `4C32DF23E409A4B32E146029B4403DE8E488076383857C6F83FF51CB0E6EE0B5`。
 - 本次已实现：单路标注作用域随每笔保存，画布预览和导出按目标资产过滤；八种语言、固定自称语言列表、主题/语言设置页、即时切换和本地持久化；中英文安装快速说明、中文使用说明及公共仓库忽略规则。
 - 实际验证及证据路径：`ruff check src tests tools` 和 `ruff format --check src tests tools` 退出 0；离屏全回归（排除耗时窗口循环）126 passed、1 deselected/41.10 秒，窗口打开关闭 100 次的独立用例 1 passed/283.11 秒。两路真实压缩视频的原生 OpenGL 单路标注检查退出 0，`reports/artifacts/annotation-scope-gl-20260927-final/result.json`；八种语言的本机原生窗口截图和固定语言名称验证退出 0，`reports/artifacts/languages-gl-20260927-final/result.json`。新 Windows 包本机 `verify_clean_windows.ps1` 使用包内 FFmpeg 和程序实测视频、图像两种模式，退出 0，显示 `CLEAN_WINDOWS_SELF_TEST_OK`，输出位于本机系统临时目录；详见 `reports/ACCEPTANCE.md`。
 - 仍失败/未验证：另一台干净 Windows、真实 150/200% 与跨屏 DPI、所有图像编码变体及各语言的全部诊断文本尚未逐一人工验收。此前 30 分钟性能数字属于旧版。
-- 下一步具体动作：审核待提交文件，配置用户指定远端，仅提交项目有关源码、文档、测试及构建文件并推送；随后核对远端提交与 README。异机测试仍须在另一台 Windows 上运行包内 `verify_clean_windows.cmd`。
+- 下一步具体动作：用户可按 README 从 GitHub 克隆并启动源码，或运行本机 `dist/VideoCompare.dist/main.exe`。异机测试仍须在另一台 Windows 上运行包内 `verify_clean_windows.cmd`；高 DPI 与跨屏项目待实际设备验证。
 - 当前启动/测试命令：源码 `& .\.venv\Scripts\python.exe -m video_compare`；Windows 包 `dist\VideoCompare.dist\main.exe`；测试 `$env:QT_QPA_PLATFORM='offscreen'; & .\.venv\Scripts\python.exe -m pytest tests\unit tests\integration tests\gui -q`。
 
 ## 2026-09-27：视频 / 图像双模式
