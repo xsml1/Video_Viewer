@@ -17,6 +17,12 @@ $output = Join-Path $runRoot 'result'
 $firstImage = Join-Path $runRoot 'test-image-a.png'
 $secondImage = Join-Path $runRoot 'test-image-b.webp'
 $imageOutput = Join-Path $runRoot 'image-result'
+$pq = Join-Path $runRoot 'hdr-pq.mp4'
+$hlg = Join-Path $runRoot 'hdr-hlg.mp4'
+$hdrOutput = Join-Path $runRoot 'hdr-result'
+$png16 = Join-Path $runRoot 'image-16bit.png'
+$tiff16 = Join-Path $runRoot 'image-16bit.tiff'
+$depthOutput = Join-Path $runRoot 'high-depth-image-result'
 
 & $ffmpegExe -hide_banner -loglevel error -f lavfi -i 'testsrc2=size=320x180:rate=30:duration=2' -c:v libx264 -pix_fmt yuv420p $first
 if ($LASTEXITCODE -ne 0) { throw "Test video A generation failed: exit $LASTEXITCODE" }
@@ -39,4 +45,18 @@ if ($LASTEXITCODE -ne 0) { throw "Image self-test failed: exit $LASTEXITCODE; re
 if (-not (Test-Path -LiteralPath (Join-Path $imageOutput 'image_compare.png') -PathType Leaf)) {
     throw "Image self-test output missing: $runRoot"
 }
+
+foreach ($test in @(@($pq, 'smpte2084'), @($hlg, 'arib-std-b67'))) {
+    $hdrFilter = 'zscale=pin=bt709:tin=bt709:min=bt709:rin=limited:p=bt2020:t=' + $test[1] + ':m=bt2020nc:r=limited:npl=100,format=yuv420p10le'
+    & $ffmpegExe -hide_banner -loglevel error -n -f lavfi -i 'testsrc2=size=320x180:rate=30:duration=2' -vf $hdrFilter -c:v libx265 -x265-params 'log-level=error:pools=2' -color_primaries bt2020 -color_trc $test[1] -colorspace bt2020nc -color_range tv $test[0]
+    if ($LASTEXITCODE -ne 0) { throw "HDR test generation failed: exit $LASTEXITCODE" }
+}
+& $appExe $pq $hlg --self-test-output $hdrOutput
+if ($LASTEXITCODE -ne 0) { throw "HDR application self-test failed: exit $LASTEXITCODE; result: $runRoot" }
+foreach ($targetImage in @($png16, $tiff16)) {
+    & $ffmpegExe -hide_banner -loglevel error -n -f lavfi -i 'testsrc=size=320x180:duration=1' -vf 'format=rgb48be' -frames:v 1 $targetImage
+    if ($LASTEXITCODE -ne 0) { throw "16-bit test image generation failed: exit $LASTEXITCODE" }
+}
+& $appExe --mode image --self-test-image-output $depthOutput $png16 $tiff16
+if ($LASTEXITCODE -ne 0) { throw "16-bit image self-test failed: exit $LASTEXITCODE; result: $runRoot" }
 Write-Output "CLEAN_WINDOWS_SELF_TEST_OK: $runRoot"

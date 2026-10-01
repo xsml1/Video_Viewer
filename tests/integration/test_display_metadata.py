@@ -112,26 +112,21 @@ def test_hevc_10bit_sdr_and_hdr_policy(tmp_path: Path) -> None:
     assert not sdr.color_info.hdr_unsupported
     assert hdr.color_info.bit_depth == 10
     assert hdr.color_info.transfer == "smpte2084"
-    assert hdr.color_info.hdr_unsupported
+    assert not hdr.color_info.hdr_unsupported
 
-    # The real decoder must refuse HDR rather than emitting an SDR-looking preview.
+    # The requested HDR feature produces a labeled SDR preview from actual source pixels.
     timeline = FrameIndexRepository(tmp_path / "index.sqlite3").build(hdr)
-    with pytest.raises(RuntimeError, match="HDR"):
-        PreciseDecoder(hdr, timeline)
+    with PreciseDecoder(hdr, timeline) as decoder:
+        frame = decoder.frame_at(0)
+    assert frame.rgb.dtype == np.uint8
+    assert frame.color_policy_id == "rgb8-v2:bt2020:smpte2084:hable:1000"
     sdr_timeline = FrameIndexRepository(tmp_path / "index.sqlite3").build(sdr)
     decoder = PreciseDecoder(sdr, sdr_timeline)
     try:
         sdr_frame = decoder.frame_at(0)
     finally:
         decoder.close()
-    frame = type(sdr_frame)(
-        hdr.asset_id,
-        sdr_frame.ordinal,
-        sdr_frame.pts,
-        sdr_frame.time_base,
-        sdr_frame.local_time,
-        sdr_frame.rgb.copy(),
-    )
+    assert sdr_frame.color_policy_id == "rgb8-sdr-v1"
     snapshot = FrameGroupSnapshot((1, 1, 1), Fraction(0), 0, {hdr.asset_id: frame})
     output = tmp_path / "hdr-frames"
     request = ScreenshotRequest(
@@ -142,6 +137,12 @@ def test_hevc_10bit_sdr_and_hdr_policy(tmp_path: Path) -> None:
         spec=TimelineSpec(SyncMode.TIME, hdr.asset_id, (hdr.asset_id,)),
         regions={hdr.asset_id: ViewRegion()},
     )
-    with pytest.raises(ValueError, match="HDR/BT.2020"):
-        export_screenshot(request)
-    assert not output.exists()
+    paths = export_screenshot(request)
+    image = QImage(str(next(path for path in paths if path.suffix == ".png")))
+    assert np.array_equal(_rgb(image), frame.rgb)
+    metadata = json.loads(next(path for path in paths if path.suffix == ".json").read_text("utf-8"))
+    color = metadata["assets"][0]["color"]
+    assert color["transfer"] == "smpte2084"
+    assert color["primaries"] == "bt2020"
+    assert "HDR PQ → SDR" in color["preview"]
+    assert color["policy_id"] == frame.color_policy_id

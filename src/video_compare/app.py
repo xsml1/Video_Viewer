@@ -37,8 +37,20 @@ def main(argv: list[str] | None = None) -> int:
         if os.environ.get("VIDEO_COMPARE_FFPROBE")
         else None
     )
-    cache = user_cache_path("video-compare", "OpenAI") / "frame-index.sqlite3"
-    window = MainWindow(cache, ffprobe_path=ffprobe, software=args.software)
+    diagnostic_output = args.self_test_output or args.self_test_image_output
+    cache = (
+        diagnostic_output / "frame-index.sqlite3"
+        if diagnostic_output is not None
+        else user_cache_path("video-compare", "OpenAI") / "frame-index.sqlite3"
+    )
+    window = MainWindow(
+        cache,
+        ffprobe_path=ffprobe,
+        software=args.software,
+        settings_path=diagnostic_output / "settings.toml"
+        if diagnostic_output is not None
+        else None,
+    )
     window.show()
     if args.mode == "image":
         window._media_mode.setCurrentIndex(1)

@@ -17,6 +17,7 @@ from video_compare.domain.models import (
     LookupStatus,
 )
 from video_compare.domain.timeline import FrameTimeline
+from video_compare.media.validation import validate_video_frame
 
 
 class IndexError(RuntimeError):
@@ -30,7 +31,7 @@ class IndexCancelled(IndexError):
 class FrameIndexRepository:
     """SQLite metadata index; each caller opens its own connection."""
 
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -148,7 +149,9 @@ class FrameIndexRepository:
                 if stream.type != "video":
                     raise IndexError(f"stream {asset.stream_index} 不是视频流")
                 frame = next(iter(container.decode(stream)), None)
-        except (av.error.FFmpegError, OSError) as exc:
+                if frame is not None:
+                    validate_video_frame(frame, asset)
+        except (av.error.FFmpegError, OSError, ValueError) as exc:
             raise IndexError(f"读取 {asset.label} 首帧失败：{exc}") from exc
         if cancelled and cancelled():
             raise IndexCancelled(f"已取消 {asset.label} 的首帧预览")
@@ -199,6 +202,7 @@ class FrameIndexRepository:
                 for frame in container.decode(stream):
                     if cancelled and cancelled():
                         raise IndexCancelled(f"已取消 {asset.label} 的索引")
+                    validate_video_frame(frame, asset)
                     tb = Fraction(frame.time_base or stream.time_base)
                     pts = frame.pts
                     occurrence = occurrences[pts] if pts is not None else 0

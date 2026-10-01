@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QComboBox as _QComboBox
 from PySide6.QtWidgets import QLabel as _QLabel
 from PySide6.QtWidgets import QLineEdit as _QLineEdit
 from PySide6.QtWidgets import QPushButton as _QPushButton
+from PySide6.QtWidgets import QSizePolicy
 
 from video_compare.ui.i18n import translate
 
@@ -38,6 +39,20 @@ class QLabel(_TextMixin, _QLabel):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._init_translation()
+
+
+class StatusLabel(QLabel):
+    """Keep asynchronous messages from resizing the canvas during a gesture."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.setWordWrap(False)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.setToolTip(self._source_text)
+
+    def setText(self, text: str) -> None:
+        super().setText(text)
+        self.setToolTip(text)
 
 
 class QPushButton(_TextMixin, _QPushButton):

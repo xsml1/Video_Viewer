@@ -15,38 +15,16 @@ import numpy as np
 import rawpy
 from PIL import Image, ImageCms, ImageOps, UnidentifiedImageError
 from pillow_heif import register_heif_opener
-from PySide6.QtGui import QColor, QImage, QImageReader, QPainter
+from PySide6.QtGui import QColor, QColorSpace, QImage, QImageReader, QPainter
 
 from video_compare.domain.models import AssetInfo, ColorInfo, DecodedFrame
+from video_compare.media.image_formats import (
+    MAX_IMAGE_BYTES,
+    check_image_size,
+    open_extended_image,
+)
 
 register_heif_opener()
-
-RAW_SUFFIXES = frozenset(
-    {
-        ".3fr",
-        ".arw",
-        ".cr2",
-        ".cr3",
-        ".dng",
-        ".erf",
-        ".k25",
-        ".kdc",
-        ".mef",
-        ".mos",
-        ".mrw",
-        ".nef",
-        ".nrw",
-        ".orf",
-        ".pef",
-        ".raf",
-        ".raw",
-        ".rw2",
-        ".sr2",
-        ".srf",
-        ".x3f",
-    }
-)
-MAX_IMAGE_BYTES = 512 * 1024 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +57,9 @@ def _rgb_from_qimage(image: QImage) -> np.ndarray:
 def _decode_with_qt(path: Path) -> tuple[np.ndarray, str, int, str]:
     reader = QImageReader(str(path))
     reader.setAutoTransform(True)
+    size = reader.size()
+    if size.isValid():
+        check_image_size(size.width(), size.height())
     image = reader.read()
     if image.isNull():
         raise ValueError(reader.errorString())
@@ -86,8 +67,11 @@ def _decode_with_qt(path: Path) -> tuple[np.ndarray, str, int, str]:
         raise ValueError("图像解码后超过单路 512 MiB 限额")
     profile = image.colorSpace()
     if profile.isValid():
-        from PySide6.QtGui import QColorSpace
-
+        if profile.transferFunction() in {
+            QColorSpace.TransferFunction.St2084,
+            QColorSpace.TransferFunction.Hlg,
+        }:
+            raise ValueError("HDR 图像尚无可信显示路径")
         image.convertToColorSpace(QColorSpace(QColorSpace.NamedColorSpace.SRgb))
         note = ""
     else:
@@ -102,18 +86,31 @@ def _decode_with_qt(path: Path) -> tuple[np.ndarray, str, int, str]:
         image = white
     if alpha:
         note = f"{note}；透明区域按白底预览" if note else "透明区域按白底预览"
+    if reader.imageCount() > 1:
+        note += "；多页/动画只显示首页"
+    if bytes(reader.format()) in {b"svg", b"svgz", b"pdf"}:
+        note += "；矢量/文档按默认尺寸栅格化预览"
     return _rgb_from_qimage(image), bytes(reader.format()).decode(errors="replace"), 8, note
 
 
-def _decode_with_pillow(path: Path) -> tuple[np.ndarray, str, int, str]:
-    with Image.open(path) as source:
-        source.seek(0)
+def _decode_with_pillow(path: Path) -> tuple[np.ndarray, str, int | None, str]:
+    with path.open("rb") as stream:
+        prefix = stream.read(64)
+    extended = open_extended_image(path, prefix)
+    source = extended[0] if extended else Image.open(path)
+    with source:
+        check_image_size(*source.size)
+        nclx = source.info.get("nclx_profile") or {}
+        if nclx.get("transfer_characteristics") in {16, 18} or nclx.get("color_primaries") == 9:
+            raise ValueError("HDR/PQ/HLG/BT.2020 图像尚无可信显示路径")
         image = ImageOps.exif_transpose(source)
         if image.width * image.height * 3 > MAX_IMAGE_BYTES:
             raise ValueError("图像解码后超过单路 512 MiB 限额")
-        source_format = source.format or path.suffix.lstrip(".").upper()
-        depth = 16 if image.mode in {"I;16", "I;16L", "I;16B", "I", "F"} else 8
-        note_parts: list[str] = []
+        source_format = (
+            extended[1] if extended else source.format or path.suffix.lstrip(".").upper()
+        )
+        depth = extended[2] if extended else source.info.get("bit_depth", 8)
+        note_parts: list[str] = list(extended[3]) if extended else []
         if getattr(source, "n_frames", 1) > 1:
             note_parts.append("多页/动画只显示首页")
         if image.mode in {"I;16", "I;16L", "I;16B"}:
@@ -121,7 +118,9 @@ def _decode_with_pillow(path: Path) -> tuple[np.ndarray, str, int, str]:
             rgb = np.repeat(gray[:, :, None], 3, axis=2)
             note_parts.append("16-bit 灰度按高 8 位预览")
             note_parts.append("未嵌入 ICC，按 sRGB 预览")
-            return rgb, source_format, depth, "；".join(note_parts)
+            return rgb, source_format, 16, "；".join(note_parts)
+        if image.mode in {"I", "F"}:
+            raise ValueError("32-bit 整数/浮点图像尚无可信 SDR 显示转换")
         icc = image.info.get("icc_profile")
         if icc:
             try:
@@ -150,7 +149,7 @@ def _decode_with_pillow(path: Path) -> tuple[np.ndarray, str, int, str]:
             note_parts.append("透明区域按白底预览")
         else:
             image = image.convert("RGB")
-        if depth > 8:
+        if depth is not None and depth > 8 and not extended:
             note_parts.append("高位深源转 RGB8 预览")
         return (
             np.array(image, dtype=np.uint8, copy=True),
@@ -163,10 +162,16 @@ def _decode_with_pillow(path: Path) -> tuple[np.ndarray, str, int, str]:
 def decode_image(path: Path) -> tuple[AssetInfo, DecodedFrame, str]:
     if not path.is_file():
         raise FileNotFoundError(path)
-    if path.suffix.lower() in RAW_SUFFIXES:
-        with rawpy.imread(str(path)) as source:
-            rgb = source.postprocess(output_bps=8, use_camera_wb=True)
-        source_format, depth, note = path.suffix.lstrip(".").upper(), 8, "RAW 已显影为 RGB8 预览"
+    with path.open("rb") as stream:
+        prefix = stream.read(16)
+    is_dng = False
+    if prefix.startswith((b"II*\0", b"MM\0*", b"II+\0", b"MM\0+")):
+        import tifffile
+
+        with tifffile.TiffFile(path) as source:
+            is_dng = 50706 in source.pages[0].tags or int(source.pages[0].photometric) == 32803
+    if is_dng:
+        rgb, source_format, depth, note = _decode_raw(path)
     else:
         try:
             rgb, source_format, depth, note = _decode_with_pillow(path)
@@ -175,10 +180,7 @@ def decode_image(path: Path) -> tuple[AssetInfo, DecodedFrame, str]:
                 rgb, source_format, depth, note = _decode_with_qt(path)
             except (ValueError, OSError) as qt_error:
                 try:
-                    with rawpy.imread(str(path)) as source:
-                        rgb = source.postprocess(output_bps=8, use_camera_wb=True)
-                    source_format = path.suffix.lstrip(".").upper() or "RAW"
-                    depth, note = 8, "RAW 已显影为 RGB8 预览"
+                    rgb, source_format, depth, note = _decode_raw(path)
                 except (OSError, ValueError, rawpy.LibRawError) as raw_error:
                     raise ValueError(
                         f"无法读取图像（Pillow: {pillow_error}；Qt: {qt_error}；RAW: {raw_error}）"
@@ -204,13 +206,25 @@ def decode_image(path: Path) -> tuple[AssetInfo, DecodedFrame, str]:
             range="full",
             pixel_format=source_format,
             bit_depth=depth,
-            inferred="未嵌入" in note or "ICC 配置无效" in note,
+            inferred=any(text in note for text in ("未嵌入", "ICC 配置无效", "色彩配置未校验")),
         ),
         codec_name=source_format,
         media_kind="image",
     )
     frame = DecodedFrame(asset_id, 0, None, Fraction(1), Fraction(0), rgb, "image-rgb8")
     return asset, frame, note
+
+
+def _decode_raw(path: Path) -> tuple[np.ndarray, str, None, str]:
+    with rawpy.imread(str(path)) as source:
+        check_image_size(source.sizes.width, source.sizes.height, 6)
+        rgb = source.postprocess(
+            output_bps=8,
+            use_camera_wb=True,
+            no_auto_bright=True,
+            output_color=rawpy.ColorSpace.sRGB,
+        )
+    return rgb, "RAW/LibRaw", None, "RAW 相机白平衡显影为 RGB8；未自动提亮"
 
 
 class ImageLoadWorker:
@@ -264,7 +278,15 @@ class ImageLoadWorker:
             try:
                 asset, frame, note = decode_image(task.path)
                 result = ImageLoadResult(task, asset, frame, note)
-            except (OSError, ValueError, rawpy.LibRawError) as exc:
+            except (
+                OSError,
+                ValueError,
+                RuntimeError,
+                SyntaxError,
+                MemoryError,
+                rawpy.LibRawError,
+                Image.DecompressionBombError,
+            ) as exc:
                 result = ImageLoadResult(task, error=str(exc))
             if not self._closed.is_set():
                 self._results.put(result)

@@ -21,6 +21,7 @@ from video_compare.domain.models import (
     FrameGroupSnapshot,
 )
 from video_compare.domain.viewport import PanelTransform, Rect, ViewRegion
+from video_compare.media.color import preview_warning
 from video_compare.ui.annotations import Annotation, draw_annotations
 from video_compare.ui.i18n import language, translate
 from video_compare.ui.layout import (
@@ -288,15 +289,7 @@ def paint_group(
         if box is None:
             continue
         color = assets[asset_id].color_info
-        warning = translate(
-            "HDR/BT.2020 仅元信息"
-            if color.hdr_unsupported
-            else "色彩推定"
-            if color.inferred
-            else f"{color.bit_depth}-bit 源 · RGB8 预览"
-            if color.bit_depth and color.bit_depth > 8
-            else ""
-        )
+        warning = translate(preview_warning(color))
         frame = snapshot.frames.get(asset_id) if snapshot is not None else None
         if frame is None:
             info = translate("等待画面")

@@ -524,7 +524,7 @@ def test_real_480p_1080p_4k_grid_shares_normalized_roi(qtbot, tmp_path: Path) ->
 
 
 @pytest.mark.gui
-def test_hdr_import_is_rejected_without_disrupting_existing_group(qtbot, tmp_path: Path) -> None:
+def test_hdr_import_joins_real_atomic_group_with_visible_sdr_policy(qtbot, tmp_path: Path) -> None:
     root = Path(__file__).resolve().parents[1] / "assets" / "generated"
     ffprobe = (
         Path(__file__).resolve().parents[2]
@@ -539,25 +539,31 @@ def test_hdr_import_is_rejected_without_disrupting_existing_group(qtbot, tmp_pat
     window.show()
     window.load_files([root / "f05_h264_bframes.mp4", root / "f05_ffv1_oracle.mkv"])
     qtbot.waitUntil(lambda: window.canvas._snapshot is not None and len(window._assets) == 2)
-    before = window.canvas._snapshot
     asset_ids = set(window._assets)
     window.load_files([root / "f09_hdr_pq.mp4"])
     qtbot.waitUntil(lambda: window._pending_add == 0, timeout=5000)
-    assert set(window._assets) == asset_ids
-    assert window.canvas._snapshot is before
-    assert "HDR/BT.2020" in window._status.text()
+    qtbot.waitUntil(
+        lambda: window.canvas._snapshot is not None and len(window.canvas._snapshot.frames) == 3,
+        timeout=5000,
+    )
+    assert asset_ids < set(window._assets)
+    assert len(window._assets) == 3
+    hdr_id = next(key for key in window._assets if key not in asset_ids)
+    assert "hable:1000" in window.canvas._snapshot.frames[hdr_id].color_policy_id
+    window._file_list.setCurrentRow(2)
+    assert "HDR PQ → SDR" in window._asset_info.text()
 
     window.load_files([root / "f09_sdr_10bit.mp4"])
     qtbot.waitUntil(lambda: window._pending_add == 0, timeout=5000)
-    assert len(window._assets) == 3, window._status.text()
+    assert len(window._assets) == 4, window._status.text()
     qtbot.waitUntil(
         lambda: (
-            len(window._assets) == 3
+            len(window._assets) == 4
             and window.canvas._snapshot is not None
-            and len(window.canvas._snapshot.frames) == 3
+            and len(window.canvas._snapshot.frames) == 4
         )
     )
-    window._file_list.setCurrentRow(2)
+    window._file_list.setCurrentRow(3)
     assert "源 10-bit" in window._asset_info.text()
     assert "HDR/BT.2020" not in window._asset_info.text()
 
@@ -1736,7 +1742,9 @@ def test_hundred_real_replace_remove_reload_cycles_release_old_workers(
         window.load_files([second_path])
         qtbot.waitUntil(
             lambda: (
-                window.canvas._snapshot is not None and len(window.canvas._snapshot.frames) == 2
+                window.canvas._snapshot is not None
+                and len(window.canvas._snapshot.frames) == 2
+                and window._pending_add == 0
             ),
             timeout=5000,
         )

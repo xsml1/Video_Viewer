@@ -1,5 +1,41 @@
 # 验收状态（A01–A23）
 
+## 2026-10-01：视频/图像格式、HDR 与本机发布验证
+
+本节更新本次受影响项；后文 9 月记录为历史版本。平台 Windows 11 x64、Python 3.11.16、PySide6 6.11.2、PyAV 16.1.0（wheel FFmpeg 库）、CLI FFmpeg/ffprobe 9.0.1；Pillow 12.3.0、pillow-heif 1.8.0、rawpy 0.27.1、imagecodecs 2026.3.6、tifffile 2025.5.10。Git 测试起点 `5ef2839`，实现和证据测试时为未提交变更。
+
+- 完整回归对象：47 个 `src/**/*.py` 摘要 `9D84831E8FA857B2FFB9F78914DF610353E344433F0AC69EDB762A24344D8655`；`pytest -q --basetemp reports/artifacts/pytest-all2-20261001 -o cache_dir=reports/artifacts/pytest-cache-20261001`，**193 passed / 417.11s**，包含 100 次实际窗口开闭与 100 次替换/移除/重载、旧 worker 退出断言。日志 `reports/all_tests2_20261001.log`，退出 0。
+- 此后修正发布自检的混合容器 PTS 预期、固定长提示导致的状态栏换行，并增加三个峰值元信息用例；最终源码摘要 **`04CE493FBF41D596AA397A3A0947A9BBAEA7F1A4D77E3B4FEE981B1E0E3390E7`**。最新非耗时回归、色彩专项和最终包结果见下表。媒体/同步算法在长测后仅调整无效及低亮度峰值的标记处理；长测输入真实 1000 nit 的处理不变。
+- 静态检查：`ruff check src tests tools`、`ruff format --check src tests tools` 退出 0，`reports/ruff_delivery_20261001.log`。
+- 生成视频/图像不是用户素材。所有输入按只读处理，内容哈希检查通过；大型测试素材、虚拟环境及包不提交 GitHub。生成命令：`tools/generate_format_fixtures.py --ffmpeg <ffmpeg.exe> --output tests/assets/generated/formats-20261001`、`tools/generate_hdr_fixtures.py --ffmpeg <ffmpeg.exe> --output tests/assets/generated/hdr-20261001`；日志分别在 `reports/format_fixtures_20261001.log`、`reports/hdr_fixtures_20261001.log`。
+
+| 项目 | 状态 | 实际验证与证据（2026-10-01，退出码均为 0） |
+|---|---|---|
+| A01–A09、A11–A12、A15–A16 | 已验证通过（本机既有范围） | 完整 193 项回归及最终快速回归保留真实导入、VFR、Offset、模式切换、逐帧步进、公共区间、ROI、慢路/晚到隔离、循环和 Marker；不放宽帧号、PTS 或资源断言。 |
+| A04 扩展编码/容器 | 已验证通过 | `tests/integration/test_format_compatibility.py` 对 30 组真实编码/容器各检查 107 个定位目标、首末/GOP/B 帧、独立 ffprobe PTS 和内嵌源帧 ID；含 H.264/HEVC/VP8/VP9/AV1/MPEG-2/MPEG-4/MJPEG/WMV2/ProRes/DNxHR/FFV1/HuffYUV/QTRLE/Theora。最终回归日志 `reports/complete_tests_20261001.log`。 |
+| A10 | 进行中，实际设备环境阻塞 | 本版 `tools/verify_display_metadata.py` 在本机 DPR1 和 `QT_SCALE_FACTOR=1.5/2` 上，GL/软件旋转及 SAR 逐像素通过：`reports/artifacts/display-metadata-20261001/`、`display-metadata-dpr150-20261001/`、`display-metadata-dpr200-20261001/`；日志 `reports/display_metadata*_20261001.log`。模拟缩放不能替代实际高 DPI/跨屏验收。 |
+| A13、A19 HDR/BT.2020/颜色 | 已验证通过（SDR 预览范围） | 9 组 PQ/HLG/BT.2020 SDR/P3、10/12 位、有限/全范围真实视频：整帧与独立 CLI swscale/zimg/Hable 对照最大 <=1 个 8 位灰阶，逐帧 ID、PTS、只读保护通过。`tests/integration/test_hdr_compatibility.py`。PQ 标准亮度、HLG 固定曝光、真实元信息、BT.2020 CL 和 Dolby Vision 基础层策略另测；`reports/color_delivery_tests_20261001.log`，27 passed。Dolby Vision 是策略注入测试，没有真实 DV 片验收。 |
+| A14 | 已验证通过（本机） | HDR 实际解码 RGB8 与帧截图 PNG 逐像素一致，JSON 保留源矩阵/范围/原色/transfer/位深/峰值/推定及策略。混合 MKV/TS 自检按真实时间区间验收，不误要求相同 ordinal；`reports/selftest_mixed_pts_20261001.log` 和对应输出。最新包 35 个独立进程覆盖导入、定位、固定帧组截图及合成图导出。 |
+| A17 | 已验证通过（本机所测负载） | 两路真实 1920×1080、30fps、HEVC 10-bit PQ、60s 同一生成文件的独立解码路；64 MiB 缓存、每2秒随机定位、原生可见 GL 每5秒采样 framebuffer。**1800.0s、12,981 组、899 次 seek、错误列表空**；359 个 RSS/缓存/队列采样，缓存峰值 62,208,000 B（预算 67,108,864 B），结果队列峰值4，worker pending峰值2，线程始终7；关闭后全部 worker 已退出。RSS 首/末/峰值 541,978,624 / 521,650,176 / 549,736,448 B，没有持续增长。WDDM 1536.524s、255样本，79,400,960–79,425,536 B。证据 `reports/benchmark_hdr_gui_30min_20261001.json/.log`、`reports/benchmark_hdr_gpu_20261001.json/.log`；输入 `tests/assets/generated/hdr-20261001/stress1080pq60s.mp4`。运行期间存在构建/测试负载，平均7.21组/s包含随机定位停顿，不能当独占吞吐量或30fps保证；GPU采样从长测中途开始。测试对象为前述193回归源码版本。 |
+| A18 | 已验证通过（本机） | 两个100次循环用例包含在193通过完整回归；长测确认 decoder、视频/图像 loader、截图 worker 关闭退出。最终状态栏修改另以15个标注/布局/语言 GUI 用例通过，`reports/status_layout_tests_20261001.log`。 |
+| A19 原生画布 | 已验证通过（本机） | 真实PQ/HLG两路再扩展六路，原生GL 100%裁切等于解码RGB，完整帧组截图、脱离/重入通过；`tools/verify_gl_canvas.py --ffprobe <ffprobe.exe> --output reports/artifacts/hdr-native-gl-release-20261001 <PQ.mp4> <HLG.ts>`，`reports/hdr_native_gl_release_20261001.log`。 |
+| A20–A21 | 不在当前范围 | M9/P2 未实现，不声称通过。 |
+| A22 | 本机包已验证，另一台干净机器环境阻塞 | 最终文件夹包用仅系统 PATH、无 PYTHONPATH/VIRTUAL_ENV 的独立进程验证 39 组视频、29个图像样本及源哈希，图像固定参考颜色在导出图中检查。随包一键自检实际生成普通视频、PQ/HLG、16位 PNG/TIFF 并运行程序。缺少第二台机器，不能据本机启动宣称干净机器通过。 |
+| A23 | 部分通过，实际系统通知未验证 | 主题/语言/设置持久化相关 GUI 回归通过。尚未实际切换 Windows 系统主题验证通知链；固定状态栏后原生GL检查通过。 |
+| I04 图像兼容 | 已验证通过（所列样本） | 29 个真实图像样本加16位方向/平面布局/Alpha/多页、改名读取、预算、失败后继续加载，以及真实LibRaw合成Bayer DNG/改名DNG显影。`tests/unit/test_image_readers.py`、`tests/integration/test_format_compatibility.py`。JXL/XR/LS 未校验全部ICC/HDR配置，厂商相机RAW与PSD分层等仍未验证；详细边界见 `docs/FORMAT_SUPPORT.zh-CN.md`。 |
+
+最终交付验证：
+
+- 最终源码摘要 `04CE493FBF41D596AA397A3A0947A9BBAEA7F1A4D77E3B4FEE981B1E0E3390E7`，最新 `pytest -q -k 'not test_one_hundred_real_single_video_window_open_close_cycles and not test_hundred_real_replace_remove_reload_cycles_release_old_workers' --basetemp reports/artifacts/pytest-complete-20261001 -o cache_dir=reports/artifacts/pytest-cache-20261001`：**194 passed、2 deselected / 39.45s**，`reports/complete_tests_20261001.log`，退出0。两个耗时用例已在本次完整193通过回归中实际执行；本次定向复测保留其原断言并明确排除，无 skip/xfail。
+- `scripts/build_windows.ps1 -FfmpegBin <本机bin>` 最终构建退出0，`reports/build_hdr_complete_20261001.log`；`dist/VideoCompare.dist/main.exe` SHA-256 **`8229DF06548040DFBEB5286CDBC6446613CDF9800B37B045A5A2E44A29BFD791`**。包内实际包含 ffprobe/ffmpeg、Qt 图像插件、imagecodecs 扩展以及 msvcp140/vcomp140/vcruntime140 等依赖。早期构建警告与中间包只作为诊断记录，不代替最终产物。
+- `tools/verify_format_package.py --exe dist/VideoCompare.dist/main.exe --output reports/artifacts/package-format-complete-20261001`：35个实际独立程序进程，39组视频和29个图像样本，均完成真实导入、定位/对比、截图/导出；图像参考颜色与全部输入哈希通过。结果 `reports/artifacts/package-format-complete-20261001/result.json`，日志 `reports/package_format_complete_20261001.log`，退出0。
+- `dist/VideoCompare.dist/verify_clean_windows.ps1` 在本机项目专用临时目录运行，普通视频、PQ/HLG与16位PNG/TIFF四组实际程序自检通过，`reports/clean_windows_selftest_complete_20261001.log`，退出0、`CLEAN_WINDOWS_SELF_TEST_OK`。该日志记录实际生成的输出目录。
+- 上述产物与详细JSON/log保存在本机且实际存在；GitHub保留本报告和可复跑脚本，不上传生成素材、缓存、虚拟环境或发布文件夹。另一台干净机器、真实高DPI/跨屏、Windows系统主题实际变化仍未验证，完整M0–M8门槛尚未全部满足。
+
+
+
+
+
 ## 2026-09-27 标注作用域、语言与新版包
 
 本节测试对象为 Windows 11 x64、CPython 3.11.16、PySide6 6.11.2、PyAV 16.1.0、Pillow 12.3.0、pillow-heif 1.8.0、rawpy 0.27.1，`src/**/*.py` 43 文件摘要 `2DB84E77F33CA66A767B2782D53316F06C23120AB838B8FCA2F942E528951350`。测试时 Git 尚无提交；测试对象为当前工作树。输入是本地生成图像和真实 H.264 压缩测试视频，不含上传的用户素材。

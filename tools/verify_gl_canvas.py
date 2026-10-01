@@ -22,11 +22,19 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--ffprobe", required=True, type=Path)
     parser.add_argument("--output", default=Path("reports/artifacts"), type=Path)
+    parser.add_argument("videos", nargs="*", type=Path)
     args = parser.parse_args()
+    if args.videos and len(args.videos) != 2:
+        parser.error("pass exactly two videos or use the generated default pair")
+    args.output.mkdir(parents=True, exist_ok=True)
     root = Path("tests/assets/generated").resolve()
-    paths = [root / "f05_h264_bframes.mp4", root / "f05_ffv1_oracle.mkv"]
+    paths = args.videos or [root / "f05_h264_bframes.mp4", root / "f05_ffv1_oracle.mkv"]
     app = QApplication(sys.argv)
-    window = MainWindow(root / "gl-index.sqlite3", ffprobe_path=args.ffprobe)
+    window = MainWindow(
+        args.output / "gl-index.sqlite3",
+        ffprobe_path=args.ffprobe,
+        settings_path=args.output / "settings.toml",
+    )
     if isinstance(window.canvas, CompareCanvas):
         window.canvas.render_failed.connect(lambda reason: print(f"GL render failed: {reason}"))
     window.show()

@@ -9,7 +9,8 @@ from av.video.reformatter import VideoReformatter
 
 from video_compare.domain.models import AssetInfo, DecodedFrame
 from video_compare.domain.timeline import FrameTimeline
-from video_compare.media.color import to_rgb8
+from video_compare.media.color import display_policy_id, to_rgb8
+from video_compare.media.validation import validate_video_frame
 
 
 class DecodeError(RuntimeError):
@@ -23,7 +24,7 @@ class PreciseDecoder:
         if timeline.asset_id != asset.asset_id:
             raise ValueError("索引与视频身份不一致")
         if asset.color_info.hdr_unsupported:
-            raise DecodeError("HDR 源尚无可信显示路径，不能当作 SDR 预览")
+            raise DecodeError("该 HDR/BT.2020 编码尚无可信显示路径")
         self.asset = asset
         self.timeline = timeline
         self._container: av.InputContainer | None = None
@@ -135,6 +136,10 @@ class PreciseDecoder:
         return None
 
     def _convert(self, frame: av.VideoFrame, ordinal: int) -> DecodedFrame:
+        try:
+            validate_video_frame(frame, self.asset)
+        except ValueError as exc:
+            raise DecodeError(str(exc)) from exc
         expected = self.timeline.entries[ordinal]
         if frame.pts != expected.pts or Fraction(frame.time_base) != expected.time_base:
             raise DecodeError(
@@ -150,4 +155,5 @@ class PreciseDecoder:
             local_time=local_time,
             rgb=rgb,
             timing_quality=expected.timing_quality,
+            color_policy_id=display_policy_id(self.asset.color_info),
         )

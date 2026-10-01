@@ -63,6 +63,9 @@ class ColorInfo:
     bit_depth: int | None = None
     inferred: bool = False
     hdr_unsupported: bool = False
+    peak_nits: float = 1000.0
+    peak_inferred: bool = True
+    dolby_vision: bool = False
 
 
 @dataclass(frozen=True, slots=True)

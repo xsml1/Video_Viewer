@@ -39,6 +39,8 @@ from video_compare.domain.timeline import (
     format_timecode,
     parse_timecode,
 )
+from video_compare.media.color import display_notice, preview_warning
+from video_compare.media.formats import media_file_filter
 from video_compare.media.images import ImageLoadResult, ImageLoadTask, ImageLoadWorker
 from video_compare.media.index import FrameIndexRepository
 from video_compare.media.loading import AssetLoadWorker, LoadResult, LoadTask
@@ -62,7 +64,13 @@ from video_compare.ui.export_dialog import (
 )
 from video_compare.ui.i18n import language, set_language, translate
 from video_compare.ui.layout import LAYOUT_LABELS, choose_rows
-from video_compare.ui.localized_widgets import QComboBox, QLabel, QLineEdit, QPushButton
+from video_compare.ui.localized_widgets import (
+    QComboBox,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    StatusLabel,
+)
 from video_compare.ui.settings_dialog import SettingsDialog
 from video_compare.ui.theme import apply_theme
 
@@ -434,9 +442,8 @@ class MainWindow(QMainWindow):
         transport_layout.addLayout(transport_row)
         status_row = QHBoxLayout()
         status_row.setSpacing(8)
-        self._status = QLabel("添加本地视频；当前按完整帧组同步显示", self)
+        self._status = StatusLabel("添加本地视频；当前按完整帧组同步显示", self)
         self._status.setObjectName("Status")
-        self._status.setWordWrap(True)
         status_row.addWidget(self._status, 1)
         self._loop_status = QLabel("循环：未设置", self)
         self._loop_status.setObjectName("Hint")
@@ -739,17 +746,8 @@ class MainWindow(QMainWindow):
         self._status.setText(f"{reason}；已切换软件渲染")
 
     def _choose_files(self) -> None:
-        if self.media_kind == "image":
-            title = "添加本地图像"
-            files = (
-                "图像 (*.png *.jpg *.jpeg *.jfif *.bmp *.gif *.tif *.tiff *.webp "
-                "*.avif *.heic *.heif *.svg *.svgz *.pdf *.psd *.tga *.ico *.icns "
-                "*.pbm *.pgm *.ppm *.xbm *.xpm *.dng *.cr2 *.cr3 *.nef *.arw "
-                "*.raf *.rw2 *.orf *.pef);;所有文件 (*)"
-            )
-        else:
-            title = "添加本地视频"
-            files = "视频 (*.mp4 *.mov *.mkv *.avi *.webm);;所有文件 (*)"
+        title = "添加本地图像" if self.media_kind == "image" else "添加本地视频"
+        files = media_file_filter(self.media_kind)
         names, _ = QFileDialog.getOpenFileNames(self, translate(title), "", translate(files))
         if names:
             self.load_files([Path(name) for name in names])
@@ -762,9 +760,7 @@ class MainWindow(QMainWindow):
             self,
             translate("替换图像" if self.media_kind == "image" else "替换视频"),
             "",
-            translate("图像 (*.*);;所有文件 (*)")
-            if self.media_kind == "image"
-            else translate("视频 (*.mp4 *.mov *.mkv *.avi *.webm);;所有文件 (*)"),
+            translate(media_file_filter(self.media_kind)),
         )
         if name:
             self.replace_selected(Path(name))
@@ -830,8 +826,10 @@ class MainWindow(QMainWindow):
             notices.append(f"源 {color.bit_depth}-bit")
         if color.inferred:
             notices.append("色彩元信息缺失，已推定")
-        if color.hdr_unsupported:
-            notices.append("HDR/BT.2020 暂不显示画面，仅可查看元信息")
+        if display_notice(color):
+            notices.append(display_notice(color))
+        if color.dolby_vision:
+            notices.append("Dolby Vision 兼容基础层，未应用动态元数据")
         if transform.rotation_degrees:
             notices.append(f"逆时针旋转 {transform.rotation_degrees}°")
         if transform.sample_aspect_ratio != 1:
@@ -840,7 +838,8 @@ class MainWindow(QMainWindow):
         range_name = color.range or "未知"
         self._asset_info.setText(
             f"{asset.coded_width}×{asset.coded_height} · {asset.codec_name or '未知编码'}\n"
-            f"色彩 {matrix}/{range_name} · {' · '.join(notices)}"
+            f"色彩 {matrix}/{range_name} · {color.primaries or '未知原色'}/"
+            f"{color.transfer or '未知传递函数'}\n{' · '.join(notices)}"
             + ("\n已脱离时间同步，画面保留在退出时" if asset_id in self._excluded_ids else "")
         )
 
@@ -1676,8 +1675,7 @@ class MainWindow(QMainWindow):
                 skipped.append(f"{asset.label}（没有已显示的画面）")
                 continue
             if asset.color_info.hdr_unsupported:
-                # HDR panes cannot produce trustworthy RGB8 pixels, so they stay out.
-                skipped.append(f"{asset.label}（HDR/BT.2020 无可信 RGB8 画面）")
+                skipped.append(f"{asset.label}（不支持的 HDR/BT.2020 编码）")
                 continue
             transform = pane_transform(
                 canvas.width(),
@@ -1722,6 +1720,11 @@ class MainWindow(QMainWindow):
                                 else ""
                             ),
                         )
+                    )
+                    + (
+                        f" · {translate(preview_warning(asset.color_info))}"
+                        if self.media_kind == "video" and preview_warning(asset.color_info)
+                        else ""
                     ),
                 )
             )

@@ -1,5 +1,21 @@
 # 开发进度
 
+## 2026-10-01：格式兼容、HDR/BT.2020 与 GitHub 更新
+
+- 当前任务范围：继续 M0–M8/P0/P1 的未完成项，尽可能扩展视频/图像格式；按用户新明确要求增加 HDR、BT.2020 的 SDR 预览，并提交现有 GitHub 仓库。M9/P2、音频、转码及视频导出不在范围。
+- 当前里程碑：真实格式扩展、PQ/HLG/BT.2020/P3 预览、截图/标注、本机30分钟HDR资源验证和本机发布包已验证；A10实际高DPI/跨屏、A22第二台干净机器、A23真实系统主题通知仍受环境限制，原计划完整门槛未全部完成。
+- 代码状态/分支/提交：基于 `main` 的 `5ef2839`；测试时实现未提交，源文件47个，最终摘要 `04CE493FBF41D596AA397A3A0947A9BBAEA7F1A4D77E3B4FEE981B1E0E3390E7`。本轮源码及记录提交进入 `main`，提交身份采用已核实的GitHub登录账号；具体提交/推送结果以本记录对应的Git日志为准。原先已有文件保留，生成视频/图像、环境及 `dist/` 不上传。
+- 本次已实现：30组普通视频编码/容器、9组HDR/广色域真实兼容；PQ/HLG线性光Hable映射、BT.2020 NCL/P3转709、真实峰值及推定提示；保留RGB8/原色色彩信息与截图一致性；imagecodecs/tifffile增加JPEG XL/XR/LS及16位PNG/TIFF读取；RAW关闭自动提亮并验证合成Bayer DNG。修复真实全范围/高位深转换、首笔标注窗口变宽、长状态提示改变画布高度，以及混合容器自检误要求相同帧号的问题。
+- 实际验证及证据路径：完整193测试通过，包含100次开闭及100次替换/删除/重载；后续最终194通过、2个已执行的耗时用例明确排除，`reports/complete_tests_20261001.log`；最后色彩专项27通过，Ruff检查/格式通过。原生GL两路/六路HDR、100%像素、截图、脱离/重入通过，`reports/artifacts/hdr-native-gl-release-20261001/`。两路1080p PQ运行1800s、12,981完整组、899次定位、错误空及资源有界，`reports/benchmark_hdr_gui_30min_20261001.json` 和GPU报告。完整细节及各版摘要见 `reports/ACCEPTANCE.md`。
+- 发布产物：`dist/VideoCompare.dist/main.exe`，SHA-256 `8229DF06548040DFBEB5286CDBC6446613CDF9800B37B045A5A2E44A29BFD791`。35个独立进程验证39组视频/29图像样本和原件哈希，`reports/artifacts/package-format-complete-20261001/result.json`；随包一键自检在本机实跑普通视频/PQ/HLG/16位图像，通过 `CLEAN_WINDOWS_SELF_TEST_OK`。
+- 仍失败/未验证：原生HDR屏幕输出、BT.2020 CL、非兼容Dolby Vision未实现；不应用DV/HDR10+动态元数据。JXL/XR/LS所有ICC变体、真实厂商相机RAW、分层PSD/浮点HDR图像、超大图像未全面验证。不同长片/六路HDR/4K实时性能未量化；长测期间还有其他构建/测试负载，不保证30fps。A10/A22/A23缺少真实外部设备/操作证据。
+- 下一步具体动作：本机双击下列程序直接使用。另一台Windows可双击包内 `verify_clean_windows.cmd` 自动取得A22所需基本证据；有实际150/200%跨屏设备后验证A10，真实切换Windows系统主题时验证A23。测试素材和验证脚本已准备，用户无需修改源码或选择线程方案。
+- 当前启动/测试命令：程序 `dist\VideoCompare.dist\main.exe`；源码 `& .\.venv\Scripts\python.exe -m video_compare --ffprobe <ffprobe.exe>`；图像模式加 `--mode image`。回归 `& .\.venv\Scripts\python.exe -m pytest -q --basetemp reports/artifacts/pytest-<新名字> -o cache_dir=reports/artifacts/pytest-cache-20261001`；生成素材/打包检查命令见验收报告和 `docs/FORMAT_SUPPORT.zh-CN.md`。
+
+以下9月记录为历史版本；其包哈希和测试结果不代表本次新包。
+
+
+
 ## 2026-09-27：单路标注、八种界面语言与公开源码
 
 - 当前任务范围：图像/视频导出标注可按笔选择联动全部画面或仅起笔画面；设置拆分主题与语言，语言名称始终按各自语言显示，增加繁体中文和六种常用外语；完成 README 并将项目源码推送到用户指定 GitHub 仓库。

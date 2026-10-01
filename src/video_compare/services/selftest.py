@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import json
 import time
+from bisect import bisect_right
 from pathlib import Path
 
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QApplication, QMessageBox
 
+from video_compare.domain.models import SyncMode
 from video_compare.ui.canvas_common import pane_boxes, pane_transform
 from video_compare.ui.main_window import MainWindow
 
@@ -152,9 +154,22 @@ def run_self_test(app: QApplication, window: MainWindow, output_dir: Path) -> in
             snapshot = window._current_display_snapshot()
             if snapshot is None or snapshot.reference_ordinal != 1:
                 return
-            if {frame.ordinal for frame in snapshot.frames.values()} != {1}:
-                fail("seek returned an incorrect source frame")
-                return
+            spec = window._transport.spec
+            for asset_id, frame in snapshot.frames.items():
+                entries = window._timelines[asset_id].entries
+                if spec.mode is SyncMode.TIME:
+                    # Containers quantize PTS differently (e.g. MKV 33 ms vs TS
+                    # 1/30 s). Time synchronization need not select equal ordinals.
+                    source_time = entries[0].source_time + snapshot.requested_global_time
+                    source_time += spec.time_offsets.get(asset_id, 0)
+                    expected = (
+                        bisect_right([entry.source_time for entry in entries], source_time) - 1
+                    )
+                else:
+                    expected = 1 + spec.frame_offsets.get(asset_id, 0)
+                if frame.ordinal != expected or frame.pts != entries[expected].pts:
+                    fail("seek returned an incorrect source frame or PTS")
+                    return
             group = window.save_view_screenshot(output_dir)
             if group is None:
                 fail(f"screenshot request failed: {window._status.text()}")

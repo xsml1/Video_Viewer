@@ -1,4 +1,4 @@
-"""Launch the built app with local videos and no development PATH dependencies."""
+"""Launch the built app with local media and no development PATH dependencies."""
 
 from __future__ import annotations
 
@@ -13,10 +13,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--exe", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("videos", nargs=2, type=Path)
+    parser.add_argument("--mode", choices=("video", "image"), default="video")
+    parser.add_argument("files", nargs=2, type=Path)
     args = parser.parse_args()
     exe = args.exe.resolve(strict=True)
-    videos = [path.resolve(strict=True) for path in args.videos]
+    files = [path.resolve(strict=True) for path in args.files]
     output = args.output.resolve()
     if output.exists() and any(output.iterdir()):
         parser.error(f"self-test output must be a new or empty directory: {output}")
@@ -26,7 +27,8 @@ def main() -> int:
     env["PATH"] = str(Path(system_root) / "System32")
     for name in ("PYTHONPATH", "VIRTUAL_ENV", "VIDEO_COMPARE_FFPROBE", "QT_QPA_PLATFORM"):
         env.pop(name, None)
-    command = [str(exe), *(str(path) for path in videos), "--self-test-output", str(output)]
+    flag = "--self-test-image-output" if args.mode == "image" else "--self-test-output"
+    command = [str(exe), "--mode", args.mode, *(str(path) for path in files), flag, str(output)]
     result = subprocess.run(
         command,
         cwd=exe.parent,
@@ -42,7 +44,8 @@ def main() -> int:
     if result.stderr:
         print(result.stderr.rstrip(), file=sys.stderr)
     print(f"PACKAGE_EXIT_CODE={result.returncode}")
-    if result.returncode or "SELF_TEST_OK:" not in result.stdout:
+    expected = "IMAGE_SELF_TEST_OK:" if args.mode == "image" else "SELF_TEST_OK:"
+    if result.returncode or expected not in result.stdout:
         return 1
     return 0
 

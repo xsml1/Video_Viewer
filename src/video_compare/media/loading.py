@@ -136,7 +136,7 @@ class AssetLoadWorker:
                 if asset.color_info.hdr_unsupported:
                     color = asset.color_info
                     raise ProbeError(
-                        "HDR/BT.2020 暂不支持可信画面，已拒绝导入该路；"
+                        "BT.2020 CL 或非兼容 Dolby Vision 尚未支持，已拒绝导入该路；"
                         f"源元信息：{color.primaries or '未知原色'}/"
                         f"{color.transfer or '未知传递函数'}/{color.matrix or '未知矩阵'}"
                     )

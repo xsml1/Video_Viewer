@@ -44,7 +44,7 @@ def main() -> int:
     index = output.with_suffix(".sqlite3")
     if index.exists():
         parser.error("index path already exists; choose a new report path")
-    window = MainWindow(index, ffprobe_path=ffprobe)
+    window = MainWindow(index, ffprobe_path=ffprobe, settings_path=output.with_suffix(".toml"))
     window.show()
     window.load_files([video] * args.routes)
     rng = random.Random(20260925)
@@ -133,7 +133,11 @@ def main() -> int:
             worker.join(timeout=0) for worker in controller._workers.values()
         ):
             errors.append("decoder worker survived window close")
-        if not window._loader.join(timeout=0) or not window._screenshot_worker.join(timeout=0):
+        if (
+            not window._loader.join(timeout=0)
+            or not window._screenshot_worker.join(timeout=0)
+            or not window._image_loader.join(timeout=0)
+        ):
             errors.append("loader or screenshot worker survived window close")
         if not errors and (groups < 2 or seeks < 1):
             errors.append("not enough playback groups or random seeks were completed")
@@ -141,6 +145,7 @@ def main() -> int:
             "status": "failed" if errors else "measured",
             "platform": platform.platform(),
             "python": platform.python_version(),
+            "process_id": os.getpid(),
             "video": str(video),
             "renderer": "native visible QOpenGLWidget, framebuffer sampled every 5 seconds",
             "gpu_bytes": None,

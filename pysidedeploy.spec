@@ -18,5 +18,5 @@ plugins = platforms,imageformats,styles
 
 [nuitka]
 mode = standalone
-extra_args = --quiet --noinclude-qt-translations --include-package=video_compare --include-package-data=video_compare --assume-yes-for-downloads
+extra_args = --quiet --noinclude-qt-translations --include-package=video_compare --include-package-data=video_compare --include-package=imagecodecs --assume-yes-for-downloads
 

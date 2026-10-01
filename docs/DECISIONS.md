@@ -21,6 +21,8 @@
 
 ## D004：PyAV 16.1.0 色彩转换实测
 
+2026-10-01 更新：本条“不传 dst_colorspace”的早期选择已由 D039 的实际全范围/高位深实验替代；历史实验只覆盖未标记矩阵的 8 位人工帧，不能代表带真实色彩标记的解码帧。
+
 - 日期：2026-09-23
 - 决定：SDR YUV→RGB8 显式指定源矩阵与源 full/limited 范围；不传 `dst_colorspace`。GBR/RGB 格式直接做 RGB24 通道格式转换。
 - 依据：构造 Y=16、U=V=128 灰阶，`src_color_range=JPEG` 得到 (16,16,16)，`MPEG` 得到 (0,0,0)；同时传 `dst_colorspace` 时 JPEG 也错误得到 (0,0,0)。已加固定参考断言。
@@ -251,3 +253,24 @@
 - 日期：2026-09-27；用户要求统一语言选项显示逻辑，并增加繁体中文和常用语言。
 - 决定：设置窗口分“主题”和“语言”两页；主题保留原外观控件。语言列表固定显示 `简体中文 / 繁體中文 / English / 日本語 / 한국어 / Français / Deutsch / Español`，不会因当前界面语言重新翻译这些名称。选择后立即更新当前窗口、设置和导出界面的主要文案，并写入本地设置；语言目录随程序离线打包。默认仍为简体中文。
 - 依据：`tests/gui/test_language_settings.py` 遍历八种语言并检查自称、切换和重启持久化；原生 Windows 窗口截图及结果见 `reports/artifacts/languages-gl-20260927-final/`。
+
+
+## D038：扩展图像解码与真实格式矩阵
+
+- 日期：2026-10-01；用户要求尽可能兼容视频和图像格式。
+- 决定：新增 imagecodecs 2026.3.6、tifffile 2025.5.10，仅安装项目环境并锁定依赖。JPEG XL/XR/LS 与 16 位 PNG/TIFF 采用真实整数解码；保留 EXIF/ICC、方向、Alpha 和明确的 RGB8 转换提醒。RAW/DNG 按内容转入 LibRaw，不把嵌入缩略图当作传感器显影；RAW 关闭自动提亮。不同格式共用已有静态资产/画布链，不增加平行应用。
+- 边界：JXL/XR/LS 的全部 ICC/HDR 配置未验证，显示未校色提醒；浮点/HDR 静态图像失败可见。PSD 首次打开已位于合成图，移除不必要的 seek(0)，避免 Pillow 对无图层合成图返回 EOFError。
+- 验证：30 组真实视频通过嵌入源帧 ID、独立 ffprobe PTS、107 个定位目标和源文件哈希检查；29 个图像样本通过固定色块、源位深/方向/透明与只读检查。JPEG-LS 锁定版本的 check() 返回 None，改读有界 JPEG 标记头并跳过 APP 内容；AVI 最后缺失 PTS 的独立 CLI 对照显式启用 genpts，不改时间容差。
+
+## D039：用户明确授权 HDR 与 BT.2020 的 SDR 预览
+
+- 日期：2026-10-01；用户明确新增“HDR、BT.2020 等”兼容，更新实施计划 7.6 的早期拒绝策略；音频、转码、视频输出与 M9/P2 范围不变。
+- 决定：PyAV 真实源帧转 RGB16，按 PQ ST 2084 或 HLG 1000 nit/gamma 1.2 的逐通道显示模型解线性，D65 原色转换至 BT.709，固定 Hable 曲线按 MaxCLL/mastering display 或明确推定的 1000 nit 归一。有效源峰值（含低于 100 nit 的值）原样保留，无效/非有限/超出 PQ 范围的峰值明确改用推定值。BT.1886 gamma 2.4 编码输出 RGB8；BT.2020/P3 SDR 只转色域。工作浮点缓冲以 64 行分块，LUT 有界；不使用每帧自动曝光。窗口、原帧截图及合成导出用同一不可变像素，提醒明确显示 SDR 色调映射。
+- 边界：不实现 HDR 显示器输出；不应用 Dolby Vision/HDR10+ 动态元数据。兼容基础层可预览，非兼容 Dolby Vision、BT.2020 CL 明确拒绝。HLG 为逐通道近似显示模型，不承诺校准参考监视器精度。
+- 实际 API 修复：PyAV 16.1.0 仅在 src/dst 矩阵或范围不同才配置 swscale；源真实标记等于请求值且 full->full 时会跳过设置并错误使用默认 limited/601。RGB 目标的 YUV 矩阵无意义，显式传 dst_colorspace=0 触发正确源设置。该 wheel 的 bilinear YUV420p10->RGB48 色度路径在彩色块上明显损坏，改用 bicubic 色度重建路径；与独立 FFmpeg 9 CLI/zimg/Hable 输出按整帧比较，最终 9 组样本最大误差 <=1/255，无扩大容差。BT.1886 输出采用显示 EOTF，与 zimg 的 display-referred 行为一致。
+- 资料：[PyAV 16.1.0 reformatter 源码](https://github.com/PyAV-Org/PyAV/blob/v16.1.0/av/video/reformatter.pyx)、[FFmpeg Hable 实现](https://ffmpeg.org/doxygen/8.0/vf__tonemap_8c_source.html)、[zimg gamma](https://github.com/sekrit-twc/zimg/blob/master/src/zimg/colorspace/gamma.cpp)。公式独立实现，未复用被测函数生成预期。
+
+## D040：进度式索引与标注尺寸回归
+
+- 日期：2026-10-01。
+- 决定：标注选择框固定最小内容长度，避免第一笔增加长名称后窗口强制扩宽；保持画布和导出像素验证标准。真实窗口 100 次替换/删除/重载测试等待完整索引完成后再断言 pending_add=0；两个完整预览帧出现不等于后台索引完成，此行为与原有进度式索引规格一致。保留每轮旧 worker 已退出及帧组资产一致的断言，不放宽时间、身份或资源上限。异步导出结果的长路径提示采用单行状态栏与完整 tooltip，避免换行在标注手势中改变画布高度。发布自检按真实 PTS 区间计算各路目标，修正 MKV 33ms 与 TS 1/30s 混合时间轴时误要求各路相同 ordinal 的旧假设。

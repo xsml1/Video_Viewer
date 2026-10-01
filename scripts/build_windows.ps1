@@ -78,6 +78,7 @@ try {
     New-Item -ItemType Directory -Path (Join-Path $output 'docs') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $output 'reports') -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\USER_GUIDE.zh-CN.md') -Destination (Join-Path $output 'docs\USER_GUIDE.zh-CN.md')
+    Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\FORMAT_SUPPORT.zh-CN.md') -Destination (Join-Path $output 'docs\FORMAT_SUPPORT.zh-CN.md')
     Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\PROGRESS.md') -Destination (Join-Path $output 'docs\PROGRESS.md')
     Copy-Item -LiteralPath (Join-Path $projectRoot 'reports\ACCEPTANCE.md') -Destination (Join-Path $output 'reports\ACCEPTANCE.md')
     Copy-Item -LiteralPath (Join-Path $projectRoot 'reports\DEMO.md') -Destination (Join-Path $output 'reports\DEMO.md')

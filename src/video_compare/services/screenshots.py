@@ -19,6 +19,7 @@ from PySide6.QtGui import QImage, QTransform
 
 from video_compare.domain.models import AssetInfo, FrameGroupSnapshot, TimelineSpec
 from video_compare.domain.viewport import ViewRegion
+from video_compare.media.color import display_notice
 from video_compare.services.comparison_export import (
     CompositeLayout,
     CompositeTile,
@@ -156,6 +157,13 @@ def _metadata(
                 "color": {
                     "matrix": request.assets[asset_id].color_info.matrix,
                     "range": request.assets[asset_id].color_info.range,
+                    "primaries": request.assets[asset_id].color_info.primaries,
+                    "transfer": request.assets[asset_id].color_info.transfer,
+                    "bit_depth": request.assets[asset_id].color_info.bit_depth,
+                    "peak_nits": request.assets[asset_id].color_info.peak_nits,
+                    "peak_inferred": request.assets[asset_id].color_info.peak_inferred,
+                    "dolby_vision": request.assets[asset_id].color_info.dolby_vision,
+                    "preview": display_notice(request.assets[asset_id].color_info),
                     "inferred": request.assets[asset_id].color_info.inferred,
                     "hdr_unsupported": request.assets[asset_id].color_info.hdr_unsupported,
                     "policy_id": snapshot.frames[asset_id].color_policy_id,

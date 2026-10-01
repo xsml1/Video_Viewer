@@ -57,6 +57,11 @@ class AnnotationBar(QFrame):
         )
         choices.addWidget(self._color_combo)
         self._annotation_select = QComboBox(self)
+        # New annotation labels must not increase the window's minimum width.
+        self._annotation_select.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self._annotation_select.setMinimumContentsLength(12)
         self._annotation_select.setToolTip("选择要删除的标注")
         self._annotation_select.setMinimumWidth(115)
         choices.addWidget(self._annotation_select)
