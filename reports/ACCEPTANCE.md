@@ -2,12 +2,14 @@
 
 ## 2026-10-13：追加工作区全屏
 
-用户明确授权A20中的全屏单项，并要求先将当前功能同步原GitHub仓库，再执行剩余自检/验证。此前已执行的结果保留；以下不把尚未构建的全屏包宣称通过。
+用户明确授权A20中的全屏单项，并要求先同步再执行剩余自检/验证。功能e152d07及回归fdb68e9已推送https://github.com/xsml1/Video_Viewer 的main，之后执行以下最终验证；此前结果作为对应旧版本证据保留。
 
 - 本机源码原生GL：reports/artifacts/fullscreen-native-gl-delivery-20261013/result.json，退出0；屏幕/画布/framebuffer1920×1080、DPR1，同canvas/transport/decoder/完整帧组保留。Space播放暂停、左右真实帧标识、Ctrl滚轮联动、Esc/F11/右上×退出与恢复通过，混合截图/导出及输入SHA不变。源48文件摘要8377BD7BD97CD17CC4C02FDB911E2328359B688A70832C99909D6730BDA7CA82；截图native-gl-fullscreen.png。
-- 全屏GUI与相关21项通过/4.10s，reports/fullscreen_gui_tests_20261013.log，退出0；覆盖正常/最大化/隐藏侧栏恢复、模态隔离、ROI、关闭释放。新增动态标注完成后隐藏恢复的回归待同步后执行。
+- 同步后最终回归234 passed、2 deselected/47.19s，reports/fullscreen_delivery_tests_20261013.log，退出0；包括动态标注在全屏期间完成后不复活工具栏、全屏期间像素/标注状态保持隐藏且退出恢复最新状态。源48文件摘要仍为8377BD7BD97CD17CC4C02FDB911E2328359B688A70832C99909D6730BDA7CA82，Git fdb68e9。两项100次循环在本轮增加全屏前的226通过中实际执行，此处明确排除，不修改其断言。Ruff检查/98文件格式通过。
 - 源码进程自检两种输入均含真实全屏/×恢复相位，输出fullscreen=True normal_restore=True；reports/fullscreen_source_mixed_selftest_20261013.log、fullscreen_source_image_selftest_20261013.log，退出0。
-- 全屏最终Windows包及完整最终回归尚待同步后运行。下方226项/9702A6包是增加全屏前的已验证混合版本；M9其余P2仍范围外，高DPI/跨屏与异机继续未验证。
+- 同步后原生全屏复跑：reports/fullscreen_native_gl_after_push_20261013.log、reports/artifacts/fullscreen-native-gl-after-push-20261013/result.json，退出0。1920×1080/DPR1、实际鼠标目录/对调、Space/左右源ID、Ctrl滚轮、Esc/F11/×、固定混合PNG/JSON/导出及原件SHA全部通过。
+- 最终Windows构建退出0，reports/build_fullscreen_20261013.log。dist/VideoCompare.dist/main.exe SHA256 **B2F1A3113E98D864353FF79BE5DBE2530F329DA12C2C3BA6BD1F8DC4EC5B9E3D**。仅系统PATH的独立进程实跑PNG+H.264混合，fullscreen=True normal_restore=True，随后精确定位、固定截图、导出通过；reports/package_fullscreen_mixed_20261013.log、reports/artifacts/package-fullscreen-mixed-20261013/，退出0。随包verify_clean_windows.ps1在本机实跑SDR视频、图像、PQ/HLG、16位图像，四种进程均全屏/×恢复后完成自检，CLEAN_WINDOWS_SELF_TEST_OK，reports/clean_windows_fullscreen_20261013.log，退出0。
+- A20仅全屏单项已通过，M9其余P2仍范围外。真实高DPI/跨屏、另一台干净Windows及实际系统主题变化继续未验证。本轮未重测30分钟吞吐/6路4K。下方226项/9702A6包属于增加全屏前的版本；旧包保留dist/VideoCompare.pre-fullscreen-20261013/。
 
 ## 2026-10-12–13：文件夹浏览与混合工作区
 
@@ -22,7 +24,7 @@
 | A14 混合截图/导出 | 已验证通过（本机） | 固定第18UI帧（source ID17）后截图再播放，PNG/JSON仍为固定组，视频PTS/帧身份与像素一致、图像标明static、media_kind=mixed。对比图1078×302/无JSON，输入SHA不变。`reports/artifacts/mixed-native-gl-delivery-20261013/frames/`、`view/`、`mixed-comparison.png`。 |
 | A19 GL/软件回退 | 已验证通过（本机所测） | 原生单QOpenGLWidget，DPR1/framebuffer1080×678，角落标签1252绿色像素。模拟首次上传失败的软件回退保留完整真实帧/顺序/视图/decoder，截图可保存。Qt `QWidget.grab()`漏GL叠加，`window-qt-widget-grab.png`只证外壳/目录；画布证据用独立`native-gl-mixed-swapped.png`及实际产品截图。 |
 | A18 索引关闭 | 已验证通过（专项） | SQLite每次连接独占并关闭，事务成功提交/异常回滚；保留强引用时仍能立即Windows rename/unlink；两个线程及真实H.264读写/reuse覆盖。连接/索引/运输22项专项通过。 |
-| A01–A09/A11–A16/A18/A23 既有回归 | 最终完整集运行中 | Ruff检查/格式退出0（97文件），`reports/workspace_ruff_20261013.log`。审查前快速全回归216 passed、2 deselected/43.71s，`reports/workspace_regression_20261013.log`。最终源码226项含两个100次开闭/替换循环正在执行，完成后替换本状态。 |
+| A01–A09/A11–A16/A18/A23 既有回归 | 已验证通过（该混合版本） | Ruff检查/格式退出0（97文件），`reports/workspace_ruff_20261013.log`。完整226项含两种100次开闭/替换循环通过/370.19s，`reports/workspace_release_tests_20261013.log`，退出0；对应本节CD901E5A源码，增加全屏后的最终版本结果见上节。 |
 | A22 新Windows包 | 本机包已验证，异机环境阻塞 | 构建退出0，`reports/build_workspace_20261013.log`；`dist/VideoCompare.dist/main.exe` SHA256 **9702A62658BC3F643033F22DEF0C67D4A6C9F6062D8F8F0A26F49EE64224AD99**。旧包保留`dist/VideoCompare.pre-folder-workspace-20261013/`。仅系统PATH独立进程实际PNG+H.264混合导入/定位/截图/导出退出0，`reports/package_mixed_workspace_20261013.log`和`reports/artifacts/package-mixed-workspace-20261013/`。随包自检实跑视频、图像、PQ/HLG、16位图像，退出0及CLEAN_WINDOWS_SELF_TEST_OK，`reports/clean_windows_workspace_20261013.log`。 |
 | A10/A17/A20–A21/A23 边界 | 环境阻塞/未重测/范围外 | 真实高DPI/跨屏、第二台干净Windows、实际系统主题变化仍未测；本轮未重测30分钟吞吐/6路4K持续实时。M9/P2仍范围外；此处工作区是同窗会话，不增加Workspace持久化。 |
 

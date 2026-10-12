@@ -3,12 +3,13 @@
 ## 2026-10-12–13：文件夹浏览、混合工作区与全屏
 
 - 当前任务范围：文件夹浏览器替换右栏，图像/视频混合添加，画面拖拽对调，Space独占播放/暂停；用户另明确增加P2中的工作区全屏单项，含左右步进、Ctrl滚轮、Esc和右上×退出；其他P2不扩展。按用户最新要求，当前先同步原GitHub仓库，再执行剩余自检/验证。
-- 当前里程碑：功能已实现；文件夹/混合版本完整226项及本机包已通过，全屏源码专项和原生1920×1080已验证。全屏最终版本打包及剩余回归将在同步之后执行。
-- 代码状态/分支/提交或未提交变更：基于main的ca06178，开始时工作树干净；当前待提交/推送。本机源48文件，最近全屏证据摘要8377BD7BD97CD17CC4C02FDB911E2328359B688A70832C99909D6730BDA7CA82。输入素材和此前包保留。
+- 当前里程碑：本次功能、最终234项回归、原生全屏、本机Windows包实际全屏/恢复及媒体自检均已验证；只保留原有外部设备/异机环境边界。
+- 代码状态/分支/提交或未提交变更：功能e152d07、回归fdb68e9已先推送GitHub main，随后才进行最终验证。本机源48文件摘要8377BD7BD97CD17CC4C02FDB911E2328359B688A70832C99909D6730BDA7CA82；最终证据文档作为后续独立提交同步。输入素材和此前包保留。
 - 本次已实现：目录导航/双击添加，统一6路及后台有序槽位，静图加入完整显示组，拖拽对调不重建decoder，Space独占，混合截图；同画布全屏隐藏其它UI，Esc/×恢复原窗口/侧栏，保留播放/步进/视图变换；SQLite连接及时关闭，首组GL失败软件回退保留混合组，异步导出时全屏隐藏栏按当前状态恢复。
-- 实际验证及证据路径：混合版本226 passed/370.19s（含两种100次循环），reports/workspace_release_tests_20261013.log；全屏相关21 passed/4.10s，reports/fullscreen_gui_tests_20261013.log；原生全屏reports/artifacts/fullscreen-native-gl-delivery-20261013/result.json；源码混合/纯图像进程自检含全屏与恢复均通过，reports/fullscreen_source_*_selftest_20261013.log。
-- 仍失败/未验证：最终全屏包及动态标注恢复新增回归尚待同步后执行。当前dist包是全屏之前的已验证混合版，SHA9702A62658BC3F643033F22DEF0C67D4A6C9F6062D8F8F0A26F49EE64224AD99；不可当全屏版交付。本轮不复测30分钟吞吐；高DPI/跨屏、异机和真实系统主题通知仍未验证。
-- 下一步具体动作：按最新授权将当前功能和记录提交并推送https://github.com/xsml1/Video_Viewer，随后完成最终回归、全屏Windows包与实际启动自检，更新本节及验收证据。
+- 实际验证及证据路径：同步后最终234 passed、2 deselected/47.19s（两项耗时循环在增加全屏前的本轮226通过中已执行，370.19s），reports/fullscreen_delivery_tests_20261013.log与workspace_release_tests_20261013.log。最终原生GL1920×1080、键鼠全屏/退出、混合固定截图、输入SHA均通过，reports/artifacts/fullscreen-native-gl-after-push-20261013/result.json。新包独立进程混合自检输出fullscreen=True normal_restore=True，reports/package_fullscreen_mixed_20261013.log；随包SDR/图像/PQ+HLG/16位图像四种实际程序自检均通过，reports/clean_windows_fullscreen_20261013.log。
+- 发布产物：dist/VideoCompare.dist/main.exe，SHA256 B2F1A3113E98D864353FF79BE5DBE2530F329DA12C2C3BA6BD1F8DC4EC5B9E3D。旧混合包保留dist/VideoCompare.pre-fullscreen-20261013，原先包保留dist/VideoCompare.pre-folder-workspace-20261013；不上传视频/缓存/虚拟环境/本机发布目录。
+- 仍失败/未验证：本轮不复测30分钟吞吐；高DPI/跨屏、另一台干净Windows和真实系统主题通知仍未验证，不作完整原计划通过声明。
+- 下一步具体动作：直接双击dist/VideoCompare.dist/main.exe；选择工作文件夹、双击素材添加。顶部全屏/F11，Space播放暂停、左右步进、Ctrl滚轮缩放、Esc/右上×退出。后续设备验证按已准备的一键自检和验收记录进行。
 - 当前启动/测试命令：源码 .venv/Scripts/python.exe -m video_compare --ffprobe <ffprobe.exe>；回归 .venv/Scripts/python.exe -m pytest -q --basetemp reports/artifacts/pytest-<唯一目录>；构建 scripts/build_windows.ps1 -FfmpegBin <bin>。
 
 ## 2026-10-01：格式兼容、HDR/BT.2020 与 GitHub 更新
