@@ -44,14 +44,13 @@ def test_language_tabs_self_names_live_switch_and_persistence(qtbot, tmp_path: P
         assert window._settings_button.text() == translate("设置")
         assert window._settings_button.text() == setting_labels[code]
         assert window._annotation_bar.link_checkbox.text() == translate("标注联动到全部画面")
-        assert window._media_mode.itemText(0) == translate("视频对比")
-        assert window._media_mode.itemText(1) == translate("图像对比")
+        assert window._file_browser.choose_button.text() == translate("选择工作文件夹")
+        assert not hasattr(window, "_media_mode")
         dialog = ExportOptionsDialog(window)
         assert dialog.windowTitle() == translate("导出对比图")
         dialog.close()
 
-    window._media_mode.setCurrentIndex(1)
-    assert window._add_button.text() == translate("添加图像")
+    assert window._add_button.text() == translate("选择工作文件夹")
     window._theme_combo.setCurrentIndex(window._theme_combo.findData("dark"))
     assert load_settings(settings_path).theme == "dark"
     assert load_settings(settings_path).language == "es_ES"
@@ -79,7 +78,6 @@ def test_switch_language_keeps_loaded_image_group(qtbot, tmp_path: Path) -> None
     )
     qtbot.addWidget(window)
     window.show()
-    window._media_mode.setCurrentIndex(1)
     window.load_files([first, second])
     qtbot.waitUntil(
         lambda: window._image_snapshot is not None and len(window._image_snapshot.frames) == 2,

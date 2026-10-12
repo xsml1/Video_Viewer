@@ -1,5 +1,16 @@
 # 开发进度
 
+## 2026-10-12–13：文件夹浏览、混合工作区与全屏
+
+- 当前任务范围：文件夹浏览器替换右栏，图像/视频混合添加，画面拖拽对调，Space独占播放/暂停；用户另明确增加P2中的工作区全屏单项，含左右步进、Ctrl滚轮、Esc和右上×退出；其他P2不扩展。按用户最新要求，当前先同步原GitHub仓库，再执行剩余自检/验证。
+- 当前里程碑：功能已实现；文件夹/混合版本完整226项及本机包已通过，全屏源码专项和原生1920×1080已验证。全屏最终版本打包及剩余回归将在同步之后执行。
+- 代码状态/分支/提交或未提交变更：基于main的ca06178，开始时工作树干净；当前待提交/推送。本机源48文件，最近全屏证据摘要8377BD7BD97CD17CC4C02FDB911E2328359B688A70832C99909D6730BDA7CA82。输入素材和此前包保留。
+- 本次已实现：目录导航/双击添加，统一6路及后台有序槽位，静图加入完整显示组，拖拽对调不重建decoder，Space独占，混合截图；同画布全屏隐藏其它UI，Esc/×恢复原窗口/侧栏，保留播放/步进/视图变换；SQLite连接及时关闭，首组GL失败软件回退保留混合组，异步导出时全屏隐藏栏按当前状态恢复。
+- 实际验证及证据路径：混合版本226 passed/370.19s（含两种100次循环），reports/workspace_release_tests_20261013.log；全屏相关21 passed/4.10s，reports/fullscreen_gui_tests_20261013.log；原生全屏reports/artifacts/fullscreen-native-gl-delivery-20261013/result.json；源码混合/纯图像进程自检含全屏与恢复均通过，reports/fullscreen_source_*_selftest_20261013.log。
+- 仍失败/未验证：最终全屏包及动态标注恢复新增回归尚待同步后执行。当前dist包是全屏之前的已验证混合版，SHA9702A62658BC3F643033F22DEF0C67D4A6C9F6062D8F8F0A26F49EE64224AD99；不可当全屏版交付。本轮不复测30分钟吞吐；高DPI/跨屏、异机和真实系统主题通知仍未验证。
+- 下一步具体动作：按最新授权将当前功能和记录提交并推送https://github.com/xsml1/Video_Viewer，随后完成最终回归、全屏Windows包与实际启动自检，更新本节及验收证据。
+- 当前启动/测试命令：源码 .venv/Scripts/python.exe -m video_compare --ffprobe <ffprobe.exe>；回归 .venv/Scripts/python.exe -m pytest -q --basetemp reports/artifacts/pytest-<唯一目录>；构建 scripts/build_windows.ps1 -FfmpegBin <bin>。
+
 ## 2026-10-01：格式兼容、HDR/BT.2020 与 GitHub 更新
 
 - 当前任务范围：继续 M0–M8/P0/P1 的未完成项，尽可能扩展视频/图像格式；按用户新明确要求增加 HDR、BT.2020 的 SDR 预览，并提交现有 GitHub 仓库。M9/P2、音频、转码及视频导出不在范围。

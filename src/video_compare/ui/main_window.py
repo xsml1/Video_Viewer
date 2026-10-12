@@ -7,7 +7,7 @@ from fractions import Fraction
 from pathlib import Path
 
 from platformdirs import user_config_path
-from PySide6.QtCore import QEasingCurve, QStandardPaths, Qt, QTimer, QVariantAnimation
+from PySide6.QtCore import QEasingCurve, QEvent, QStandardPaths, Qt, QTimer, QVariantAnimation
 from PySide6.QtGui import QIntValidator
 from PySide6.QtWidgets import (
     QApplication,
@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QListWidget,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QSlider,
     QSplitter,
@@ -40,7 +41,7 @@ from video_compare.domain.timeline import (
     parse_timecode,
 )
 from video_compare.media.color import display_notice, preview_warning
-from video_compare.media.formats import media_file_filter
+from video_compare.media.formats import infer_media_kind, media_file_filter
 from video_compare.media.images import ImageLoadResult, ImageLoadTask, ImageLoadWorker
 from video_compare.media.index import FrameIndexRepository
 from video_compare.media.loading import AssetLoadWorker, LoadResult, LoadTask
@@ -62,6 +63,7 @@ from video_compare.ui.export_dialog import (
     format_filter,
     format_suffix,
 )
+from video_compare.ui.file_browser import FileBrowser
 from video_compare.ui.i18n import language, set_language, translate
 from video_compare.ui.layout import LAYOUT_LABELS, choose_rows
 from video_compare.ui.localized_widgets import (
@@ -103,6 +105,9 @@ class MainWindow(QMainWindow):
         self._image_replacements: dict[str, ImageLoadTask] = {}
         self._image_snapshot: FrameGroupSnapshot | None = None
         self._image_revision = 0
+        # Pending task IDs reserve a pane position across independent readers.
+        self._workspace_order: list[str] = []
+        self._display_snapshot: FrameGroupSnapshot | None = None
         self._screenshot_worker = ScreenshotWorker()
         self._marker_store = MarkerStore()
         self._closing_confirmed = False
@@ -131,6 +136,8 @@ class MainWindow(QMainWindow):
         self._time_offsets: dict[str, Fraction] = {}
         self._frame_offsets: dict[str, int] = {}
         self._maximized_id: str | None = None
+        self._workspace_fullscreen = False
+        self._fullscreen_restore = None
         self._timelines: dict[str, FrameTimeline] = {}
         self._transport: TransportController | None = None
         self._canvas = SoftwareCompareCanvas(self) if software else CompareCanvas(self)
@@ -147,22 +154,19 @@ class MainWindow(QMainWindow):
         # 顶部单行工具栏：全局操作 + 设置入口。
         top_bar = QFrame(central)
         top_bar.setObjectName("TopBar")
+        self._top_bar = top_bar
+        self._root_layout = root_layout
         top_layout = QHBoxLayout(top_bar)
         top_layout.setContentsMargins(12, 8, 12, 8)
         top_layout.setSpacing(8)
         title = QLabel("Video Viewer", self)
         title.setObjectName("AppTitle")
         top_layout.addWidget(title)
-        self._media_mode = QComboBox(self)
-        self._media_mode.addItem("视频对比", "video")
-        self._media_mode.addItem("图像对比", "image")
-        self._media_mode.currentIndexChanged.connect(self._switch_media_mode)
-        top_layout.addWidget(self._media_mode)
-        add_button = QPushButton("添加视频", self)
+        add_button = QPushButton("选择工作文件夹", self)
         self._add_button = add_button
         add_button.setObjectName("Primary")
-        add_button.setToolTip("添加本地视频（最多 6 路，Ctrl+O）")
-        add_button.clicked.connect(self._choose_files)
+        add_button.setToolTip("选择文件夹，双击图像或视频添加到工作区（Ctrl+O）")
+        add_button.clicked.connect(lambda: self._file_browser.choose_directory())
         top_layout.addWidget(add_button)
         self._mode = QComboBox(self)
         self._mode.addItem("按时间同步", SyncMode.TIME)
@@ -209,6 +213,10 @@ class MainWindow(QMainWindow):
         self._linked_button.setToolTip("缩放、平移、ROI 是否联动所有画面")
         self._linked_button.toggled.connect(self._set_view_linked)
         top_layout.addWidget(self._linked_button)
+        self._fullscreen_button = QPushButton("全屏", self)
+        self._fullscreen_button.setToolTip("全屏查看工作区（F11），Esc 退出")
+        self._fullscreen_button.clicked.connect(lambda: self.set_workspace_fullscreen(True))
+        top_layout.addWidget(self._fullscreen_button)
         top_layout.addStretch(1)
         self._save_view_button = QPushButton("保存视图", self)
         self._save_view_button.setToolTip("保存整个画布 PNG，含文件名与帧号标注")
@@ -230,7 +238,7 @@ class MainWindow(QMainWindow):
         self._sidebar_button = QPushButton("侧栏", self)
         self._sidebar_button.setCheckable(True)
         self._sidebar_button.setChecked(True)
-        self._sidebar_button.setToolTip("显示或隐藏右侧信息栏")
+        self._sidebar_button.setToolTip("显示或隐藏右侧文件夹浏览器")
         self._sidebar_button.toggled.connect(self._toggle_sidebar)
         top_layout.addWidget(self._sidebar_button)
         root_layout.addWidget(top_bar)
@@ -264,7 +272,7 @@ class MainWindow(QMainWindow):
 
         side_header = QHBoxLayout()
         side_header.setSpacing(6)
-        self._side_title = self._section_title("视频文件")
+        self._side_title = self._section_title("工作文件夹")
         side_header.addWidget(self._side_title)
         side_header.addStretch(1)
         self._sidebar_hide_button = QPushButton("»", self)
@@ -274,75 +282,84 @@ class MainWindow(QMainWindow):
         self._sidebar_hide_button.clicked.connect(lambda: self._sidebar_button.setChecked(False))
         side_header.addWidget(self._sidebar_hide_button)
         side_layout.addLayout(side_header)
+        self._file_browser = FileBrowser(sidebar)
+        self._file_browser.file_activated.connect(lambda name: self.load_files([Path(name)]))
+        self._file_browser.error_occurred.connect(self._on_error)
+        side_layout.addWidget(self._file_browser, 1)
+        # Retain the selection/offset model for existing transport operations;
+        # the visible sidebar is exclusively the folder browser.
+        legacy_controls = QWidget(self)
+        legacy_controls.hide()
+        legacy_layout = QVBoxLayout(legacy_controls)
         file_controls = QHBoxLayout()
         file_controls.setSpacing(8)
-        self._remove_button = QPushButton("移除选中", self)
+        self._remove_button = QPushButton("移除选中", legacy_controls)
         self._remove_button.clicked.connect(self.remove_selected)
         file_controls.addWidget(self._remove_button)
-        self._replace_button = QPushButton("替换选中", self)
+        self._replace_button = QPushButton("替换选中", legacy_controls)
         self._replace_button.clicked.connect(self._choose_replacement)
         file_controls.addWidget(self._replace_button)
-        side_layout.addLayout(file_controls)
+        legacy_layout.addLayout(file_controls)
         order_controls = QHBoxLayout()
         order_controls.setSpacing(8)
-        self._move_up_button = QPushButton("上移", self)
+        self._move_up_button = QPushButton("上移", legacy_controls)
         self._move_up_button.clicked.connect(lambda: self._move_selected(-1))
         order_controls.addWidget(self._move_up_button)
-        self._move_down_button = QPushButton("下移", self)
+        self._move_down_button = QPushButton("下移", legacy_controls)
         self._move_down_button.clicked.connect(lambda: self._move_selected(1))
         order_controls.addWidget(self._move_down_button)
-        side_layout.addLayout(order_controls)
-        self._participant_button = QPushButton("暂停选中路同步", self)
+        legacy_layout.addLayout(order_controls)
+        self._participant_button = QPushButton("暂停选中路同步", legacy_controls)
         self._participant_button.clicked.connect(self._toggle_time_participation)
-        side_layout.addWidget(self._participant_button)
-        self._file_list = QListWidget(self)
+        legacy_layout.addWidget(self._participant_button)
+        self._file_list = QListWidget(legacy_controls)
         self._file_list.setAcceptDrops(False)
         self._file_list.currentRowChanged.connect(self._show_selected_offsets)
         self._file_list.currentRowChanged.connect(self._show_selected_asset_info)
         self._file_list.currentRowChanged.connect(self._refresh_participant_button)
-        side_layout.addWidget(self._file_list, 2)
-        hint = QLabel("双击画面单路查看 · Esc 返回网格", self)
+        legacy_layout.addWidget(self._file_list, 2)
+        hint = QLabel("双击画面单路查看 · Esc 返回网格", legacy_controls)
         hint.setObjectName("Hint")
         hint.setWordWrap(True)
-        side_layout.addWidget(hint)
-        self._asset_info = QLabel("选中一路查看源信息与预览限制", self)
+        legacy_layout.addWidget(hint)
+        self._asset_info = QLabel("选中一路查看源信息与预览限制", legacy_controls)
         self._asset_info.setWordWrap(True)
         self._asset_info.setObjectName("Hint")
-        side_layout.addWidget(self._asset_info)
+        legacy_layout.addWidget(self._asset_info)
         self._offset_title = self._section_title("选中路 Offset")
-        side_layout.addWidget(self._offset_title)
+        legacy_layout.addWidget(self._offset_title)
         offset_controls = QGridLayout()
         offset_controls.setSpacing(8)
-        offset_controls.addWidget(QLabel("时间（秒）", self), 0, 0)
-        self._time_offset_input = QLineEdit("0.000", self)
+        offset_controls.addWidget(QLabel("时间（秒）", legacy_controls), 0, 0)
+        self._time_offset_input = QLineEdit("0.000", legacy_controls)
         offset_controls.addWidget(self._time_offset_input, 0, 1)
-        offset_controls.addWidget(QLabel("帧", self), 1, 0)
-        self._frame_offset_input = QLineEdit("0", self)
+        offset_controls.addWidget(QLabel("帧", legacy_controls), 1, 0)
+        self._frame_offset_input = QLineEdit("0", legacy_controls)
         offset_controls.addWidget(self._frame_offset_input, 1, 1)
-        self._offset_button = QPushButton("应用 Offset", self)
+        self._offset_button = QPushButton("应用 Offset", legacy_controls)
         self._offset_button.clicked.connect(self._apply_offsets)
         offset_controls.addWidget(self._offset_button, 2, 0, 1, 2)
-        side_layout.addLayout(offset_controls)
+        legacy_layout.addLayout(offset_controls)
         self._marker_title_label = self._section_title("Marker（仅本次会话）")
-        side_layout.addWidget(self._marker_title_label)
+        legacy_layout.addWidget(self._marker_title_label)
         self._marker_title = QLineEdit(self)
         self._marker_title.setPlaceholderText("标题（可选）")
-        side_layout.addWidget(self._marker_title)
+        legacy_layout.addWidget(self._marker_title)
         self._marker_note = QLineEdit(self)
         self._marker_note.setPlaceholderText("备注（可选）")
-        side_layout.addWidget(self._marker_note)
+        legacy_layout.addWidget(self._marker_note)
         marker_controls = QHBoxLayout()
         marker_controls.setSpacing(8)
-        self._marker_add_button = QPushButton("添加 Marker (M)", self)
+        self._marker_add_button = QPushButton("添加 Marker (M)", legacy_controls)
         self._marker_add_button.clicked.connect(self._add_marker)
         marker_controls.addWidget(self._marker_add_button)
-        self._marker_jump_button = QPushButton("跳转选中 Marker", self)
+        self._marker_jump_button = QPushButton("跳转选中 Marker", legacy_controls)
         self._marker_jump_button.clicked.connect(self._jump_marker)
         marker_controls.addWidget(self._marker_jump_button)
-        side_layout.addLayout(marker_controls)
-        self._marker_list = QListWidget(self)
+        legacy_layout.addLayout(marker_controls)
+        self._marker_list = QListWidget(legacy_controls)
         self._marker_list.itemDoubleClicked.connect(lambda _item: self._jump_marker())
-        side_layout.addWidget(self._marker_list, 1)
+        legacy_layout.addWidget(self._marker_list, 1)
 
         self._pixel_notice = QLabel("原生像素检查：忽略 SAR；Ctrl+滚轮调整像素倍率", self)
         self._pixel_notice.setVisible(False)
@@ -488,7 +505,17 @@ class MainWindow(QMainWindow):
         self._settings_dialog.language_changed.connect(self._change_language)
 
         self._canvas.panel_double_clicked.connect(self._toggle_maximize_asset)
+        self._connect_workspace_canvas(self._canvas)
         self.setCentralWidget(central)
+        # Keep this overlay outside the canvas so exported canvas pixels never
+        # include the fullscreen exit control, in either renderer.
+        self._fullscreen_exit_button = QPushButton("×", central)
+        self._fullscreen_exit_button.setObjectName("FullscreenExit")
+        self._fullscreen_exit_button.setToolTip("退出全屏（Esc）")
+        self._fullscreen_exit_button.setAccessibleName("退出全屏")
+        self._fullscreen_exit_button.setFixedSize(40, 40)
+        self._fullscreen_exit_button.clicked.connect(lambda: self.set_workspace_fullscreen(False))
+        self._fullscreen_exit_button.hide()
         self.setAcceptDrops(True)
         self._apply_theme()
         QApplication.instance().styleHints().colorSchemeChanged.connect(
@@ -503,6 +530,8 @@ class MainWindow(QMainWindow):
         self._screenshot_timer.setInterval(50)
         self._screenshot_timer.timeout.connect(self._drain_screenshot_results)
         self._screenshot_timer.start()
+        QApplication.instance().installEventFilter(self)
+        self._refresh_transport_controls()
         if not software:
             QTimer.singleShot(100, self._ensure_canvas)
 
@@ -512,50 +541,219 @@ class MainWindow(QMainWindow):
 
     @property
     def media_kind(self) -> str:
-        return str(self._media_mode.currentData())
+        if self._image_assets and self._assets:
+            return "mixed"
+        return "image" if self._image_assets else "video"
 
     def _active_assets(self) -> dict[str, AssetInfo]:
-        return self._image_assets if self.media_kind == "image" else self._assets
+        assets = {**self._assets, **self._image_assets}
+        return {key: assets[key] for key in self._workspace_order if key in assets}
 
-    def _switch_media_mode(self) -> None:
-        image_mode = self.media_kind == "image"
-        if image_mode and self._transport is not None:
-            self._transport.pause()
-        if self._pending_annotated_export is not None and not self._saving_annotated_export:
-            self._cancel_annotation_export()
-        self._canvas.clear_annotations()
-        self._canvas.clear_group()
-        self._maximized_id = None
-        self._add_button.setText("添加图像" if image_mode else "添加视频")
-        self._save_frames_button.setText("保存各图" if image_mode else "保存原帧")
-        self._save_frames_button.setToolTip(
-            "保存各路 RGB8 预览 PNG 与图像来源 JSON"
-            if image_mode
-            else "保存各路源采样帧 PNG 与帧身份 JSON"
+    def _install_workspace_slot(self, task, asset_id: str) -> None:
+        old = task.replace_id or self._task_slot(task)
+        if old in self._workspace_order:
+            self._workspace_order[self._workspace_order.index(old)] = asset_id
+        elif asset_id not in self._workspace_order:
+            self._workspace_order.append(asset_id)
+
+    def _discard_workspace_slot(self, key: str) -> None:
+        if key in self._workspace_order:
+            self._workspace_order.remove(key)
+
+    @staticmethod
+    def _task_slot(task: LoadTask | ImageLoadTask) -> str:
+        return task.task_id if isinstance(task, LoadTask) else task.token
+
+    def _refresh_transport_controls(self) -> None:
+        available = self._transport is not None and bool(self._assets)
+        for widget in (self._mode, self._reference_combo, *self._video_transport_widgets):
+            widget.setEnabled(available)
+
+    def _connect_workspace_canvas(self, canvas) -> None:
+        canvas.panel_selected.connect(self._select_asset)
+        canvas.panel_swap_requested.connect(self._swap_assets)
+        canvas.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        canvas.customContextMenuRequested.connect(self._canvas_context_menu)
+
+    def _select_asset(self, asset_id: str) -> None:
+        for row in range(self._file_list.count()):
+            if self._file_list.item(row).data(Qt.ItemDataRole.UserRole) == asset_id:
+                self._file_list.setCurrentRow(row)
+                self._canvas.setFocus(Qt.FocusReason.MouseFocusReason)
+                break
+
+    def _swap_assets(self, first_id: str, second_id: str) -> None:
+        assets = self._active_assets()
+        if first_id == second_id or first_id not in assets or second_id not in assets:
+            return
+        first, second = (
+            self._workspace_order.index(first_id),
+            self._workspace_order.index(second_id),
         )
-        self._add_button.setToolTip(
-            "添加本地图像（最多 6 路，Ctrl+O）"
-            if image_mode
-            else "添加本地视频（最多 6 路，Ctrl+O）"
+        self._workspace_order[first], self._workspace_order[second] = (
+            self._workspace_order[second],
+            self._workspace_order[first],
         )
-        self._side_title.setText("图像文件" if image_mode else "视频文件")
-        self._mode.setVisible(not image_mode)
-        self._reference_combo.setVisible(not image_mode)
-        for widget in (
-            *self._video_side_widgets,
-            *self._offset_labels,
-            *self._video_transport_widgets,
-        ):
-            widget.setVisible(not image_mode)
-        self._refresh_file_list()
+        self._assets = {
+            key: self._assets[key] for key in self._workspace_order if key in self._assets
+        }
+        self._image_assets = {
+            key: self._image_assets[key]
+            for key in self._workspace_order
+            if key in self._image_assets
+        }
+        self._refresh_file_list(selected_id=first_id)
+        self._refresh_reference_combo()
         self._refresh_layout()
-        if image_mode:
-            self._present_images()
-        elif self._transport is not None and self._transport.displayed is not None:
-            self._on_state(self._transport.state)
-            self._on_group(self._transport.displayed)
+
+    def _canvas_context_menu(self, pos) -> None:
+        from video_compare.ui.canvas_common import pane_at
+
+        asset_id = pane_at(
+            self._canvas.width(),
+            self._canvas.height(),
+            self._canvas.display_order,
+            self._active_assets(),
+            self._canvas._snapshot,
+            self._canvas.view_regions,
+            pos.x(),
+            pos.y(),
+            layout=self._canvas.layout_mode,
+        )
+        if asset_id is None:
+            return
+        self._select_asset(asset_id)
+        menu = QMenu(self)
+        menu.addAction(translate("移除选中"), self.remove_selected)
+        menu.addAction(translate("替换选中"), self._choose_replacement)
+        menu.exec(self._canvas.mapToGlobal(pos))
+
+    def eventFilter(self, watched, event) -> bool:
+        if (
+            self._workspace_fullscreen
+            and watched is self._canvas
+            and event.type() == QEvent.Type.Resize
+        ):
+            QTimer.singleShot(0, self._position_fullscreen_exit)
+        # Space is exclusively a transport command throughout this workspace.
+        # Dialogs retain their own keyboard handling, and a held key toggles once.
+        if event.type() in {
+            QEvent.Type.ShortcutOverride,
+            QEvent.Type.KeyPress,
+            QEvent.Type.KeyRelease,
+        }:
+            app = QApplication.instance()
+            if (
+                app.activeModalWidget() is None
+                and isinstance(watched, QWidget)
+                and (watched is self or self.isAncestorOf(watched))
+            ):
+                key = event.key()
+                if key == Qt.Key.Key_Space:
+                    if event.type() == QEvent.Type.KeyPress and not event.isAutoRepeat():
+                        self._toggle_play()
+                elif key == Qt.Key.Key_F11:
+                    if event.type() == QEvent.Type.KeyPress and not event.isAutoRepeat():
+                        self.set_workspace_fullscreen(not self._workspace_fullscreen)
+                elif self._workspace_fullscreen and key in {Qt.Key.Key_Left, Qt.Key.Key_Right}:
+                    if event.type() == QEvent.Type.KeyPress:
+                        self._step(-1 if key == Qt.Key.Key_Left else 1)
+                elif self._workspace_fullscreen and key == Qt.Key.Key_Escape:
+                    if event.type() == QEvent.Type.KeyPress:
+                        self.set_workspace_fullscreen(False)
+                else:
+                    return super().eventFilter(watched, event)
+                event.accept()
+                return True
+        return super().eventFilter(watched, event)
+
+    def _position_fullscreen_exit(self) -> None:
+        if self._workspace_fullscreen:
+            button = self._fullscreen_exit_button
+            point = self._canvas.mapTo(self.centralWidget(), self._canvas.rect().topRight())
+            button.move(point.x() - button.width() - 12, point.y() + 12)
+            button.raise_()
+
+    def _set_aux_visibility(self, widget: QWidget, visible: bool) -> None:
+        if self._workspace_fullscreen:
+            # Async export can finish while its toolbar is hidden in fullscreen.
+            # Record the current intended visibility instead of reviving old UI.
+            saved = self._fullscreen_restore
+            saved["visible"] = [
+                (item, visible if item is widget else previous)
+                for item, previous in saved["visible"]
+            ]
+            widget.hide()
         else:
-            self._status.setText("添加本地视频；当前按完整帧组同步显示")
+            widget.setVisible(visible)
+
+    def set_workspace_fullscreen(self, enabled: bool) -> None:
+        if enabled == self._workspace_fullscreen:
+            return
+        self._canvas.cancel_interaction()
+        if enabled:
+            if self._sidebar_animation is not None:
+                self._sidebar_animation.stop()
+                self._sidebar_animation.deleteLater()
+                self._sidebar_animation = None
+                visible = self._sidebar_button.isChecked()
+                self._sidebar.setVisible(visible)
+                self._sidebar.setMinimumWidth(220)
+                total = sum(self._splitter.sizes())
+                width = min(620, max(220, self._sidebar_last_width)) if visible else 0
+                self._splitter.setSizes([max(0, total - width), width])
+            widgets = (
+                self._top_bar,
+                self._sidebar,
+                self._transport_panel,
+                self._pixel_notice,
+                self._annotation_bar,
+            )
+            self._fullscreen_restore = {
+                "window_state": self.windowState(),
+                "geometry": self.geometry(),
+                "minimum_size": self.minimumSize(),
+                "visible": [(widget, widget.isVisible()) for widget in widgets],
+                "margins": self._root_layout.contentsMargins(),
+                "spacing": self._root_layout.spacing(),
+                "main_spacing": self._main_layout.spacing(),
+                "main_margins": self._main_layout.contentsMargins(),
+                "splitter_sizes": self._splitter.sizes(),
+                "handle_width": self._splitter.handleWidth(),
+            }
+            self._workspace_fullscreen = True
+            for widget in widgets:
+                widget.hide()
+            self._root_layout.setContentsMargins(0, 0, 0, 0)
+            self._root_layout.setSpacing(0)
+            self._main_layout.setSpacing(0)
+            self._main_layout.setContentsMargins(0, 0, 0, 0)
+            self._splitter.setHandleWidth(0)
+            self.setMinimumSize(0, 0)
+            self.showFullScreen()
+            self._fullscreen_exit_button.show()
+            self._position_fullscreen_exit()
+            QTimer.singleShot(0, self._position_fullscreen_exit)
+        else:
+            self._workspace_fullscreen = False
+            self._fullscreen_exit_button.hide()
+            saved = self._fullscreen_restore
+            self._fullscreen_restore = None
+            self._root_layout.setContentsMargins(saved["margins"])
+            self._root_layout.setSpacing(saved["spacing"])
+            self._main_layout.setSpacing(saved["main_spacing"])
+            self._main_layout.setContentsMargins(saved["main_margins"])
+            self._splitter.setHandleWidth(saved["handle_width"])
+            for widget, visible in saved["visible"]:
+                widget.setVisible(visible)
+            self.setMinimumSize(saved["minimum_size"])
+            if saved["window_state"] & Qt.WindowState.WindowMaximized:
+                self.showMaximized()
+            else:
+                self.showNormal()
+                self.setGeometry(saved["geometry"])
+            self._splitter.setSizes(saved["splitter_sizes"])
+        self._canvas.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _section_title(self, text: str) -> QLabel:
         label = QLabel(text, self)
@@ -673,27 +871,12 @@ class MainWindow(QMainWindow):
             return
         old = self._canvas
         snapshot = self._current_display_snapshot()
-        if (
-            snapshot is None
-            and self.media_kind == "video"
-            and self._transport is not None
-            and self._transport.displayed is not None
-        ):
-            core = self._transport.displayed
-            snapshot = (
-                FrameGroupSnapshot(
-                    core.group_id,
-                    core.requested_global_time,
-                    core.reference_ordinal,
-                    {**core.frames, **self._held_frames},
-                    {**core.boundary_states, **dict.fromkeys(self._held_frames, "detached")},
-                    core.mapping_revision,
-                )
-                if self._held_frames
-                else core
-            )
-        if snapshot is None and self.media_kind == "image":
-            snapshot = self._image_snapshot
+        # GL may fail on the first upload before it has a front snapshot. The
+        # complete group submitted by the window is still owned and usable.
+        if snapshot is None and self._display_snapshot is not None:
+            candidate = self._display_snapshot
+            if set(candidate.frames) == set(self._active_assets()):
+                snapshot = candidate
         regions = old.view_regions
         linked = old._linked
         roi_mode = old._roi_mode
@@ -707,6 +890,7 @@ class MainWindow(QMainWindow):
         old.deleteLater()
         self._canvas = replacement
         replacement.panel_double_clicked.connect(self._toggle_maximize_asset)
+        self._connect_workspace_canvas(replacement)
         replacement.view_changed.connect(self._refresh_pixel_notice)
         self._software = True
         self._refresh_layout()
@@ -746,8 +930,8 @@ class MainWindow(QMainWindow):
         self._status.setText(f"{reason}；已切换软件渲染")
 
     def _choose_files(self) -> None:
-        title = "添加本地图像" if self.media_kind == "image" else "添加本地视频"
-        files = media_file_filter(self.media_kind)
+        title = "添加图像与视频"
+        files = media_file_filter("mixed")
         names, _ = QFileDialog.getOpenFileNames(self, translate(title), "", translate(files))
         if names:
             self.load_files([Path(name) for name in names])
@@ -758,9 +942,9 @@ class MainWindow(QMainWindow):
             return
         name, _ = QFileDialog.getOpenFileName(
             self,
-            translate("替换图像" if self.media_kind == "image" else "替换视频"),
+            translate("替换选中"),
             "",
-            translate(media_file_filter(self.media_kind)),
+            translate(media_file_filter("mixed")),
         )
         if name:
             self.replace_selected(Path(name))
@@ -774,7 +958,10 @@ class MainWindow(QMainWindow):
     def dropEvent(self, event) -> None:
         paths = [Path(url.toLocalFile()) for url in event.mimeData().urls() if url.isLocalFile()]
         if paths:
-            self.load_files(paths)
+            directories = [path for path in paths if path.is_dir()]
+            if directories:
+                self._file_browser.set_directory(directories[0])
+            self.load_files([path for path in paths if not path.is_dir()])
             event.acceptProposedAction()
         else:
             event.ignore()
@@ -782,15 +969,11 @@ class MainWindow(QMainWindow):
     def _refresh_file_list(self, selected_id: str | None = None) -> None:
         self._file_list.clear()
         for asset in self._active_assets().values():
-            prefix = (
-                "[已脱离同步] "
-                if self.media_kind == "video" and asset.asset_id in self._excluded_ids
-                else ""
-            )
+            prefix = "[已脱离同步] " if asset.asset_id in self._excluded_ids else ""
             self._file_list.addItem(prefix + asset.label)
             item = self._file_list.item(self._file_list.count() - 1)
             item.setData(Qt.ItemDataRole.UserRole, asset.asset_id)
-            if self.media_kind == "image":
+            if asset.media_kind == "image":
                 item.setToolTip(
                     f"{asset.path}\n{asset.coded_width}×{asset.coded_height} · {asset.codec_name}"
                 )
@@ -812,7 +995,7 @@ class MainWindow(QMainWindow):
             self._asset_info.setText("选中一路查看源信息与预览限制")
             return
         asset = assets[asset_id]
-        if self.media_kind == "image":
+        if asset.media_kind == "image":
             note = self._image_notes.get(asset_id, "")
             self._asset_info.setText(
                 f"{asset.coded_width}×{asset.coded_height} · {asset.codec_name or '图像'}\n"
@@ -844,10 +1027,8 @@ class MainWindow(QMainWindow):
         )
 
     def _refresh_participant_button(self) -> None:
-        if self.media_kind == "image":
-            return
         asset_id = self._selected_asset_id()
-        self._participant_button.setEnabled(asset_id is not None)
+        self._participant_button.setEnabled(asset_id in self._assets)
         self._participant_button.setText(
             "重新加入时间同步" if asset_id in self._excluded_ids else "暂停选中路同步"
         )
@@ -881,7 +1062,7 @@ class MainWindow(QMainWindow):
     def _change_pixel_mode(self) -> None:
         enabled = bool(self._pixel_mode_combo.currentData())
         self._canvas.set_pixel_mode(enabled)
-        self._pixel_notice.setVisible(enabled)
+        self._set_aux_visibility(self._pixel_notice, enabled)
         self._refresh_pixel_notice()
 
     def _refresh_pixel_notice(self) -> None:
@@ -899,7 +1080,7 @@ class MainWindow(QMainWindow):
 
     def _apply_offsets(self) -> None:
         asset_id = self._selected_asset_id()
-        if asset_id is None or self._transport is None:
+        if asset_id not in self._assets or self._transport is None:
             self._on_error("请先选中一路视频")
             return
         raw_time = self._time_offset_input.text().strip()
@@ -970,25 +1151,31 @@ class MainWindow(QMainWindow):
         )
 
     def load_files(self, paths: list[Path]) -> None:
-        if self.media_kind == "image":
-            self._load_images(paths)
-            return
         self._load_error_notice = None
         errors: list[str] = []
         for path in paths:
-            if len(self._assets) + self._pending_add - len(self._partial_tasks) >= 6:
+            if path.is_dir():
+                self._file_browser.set_directory(path)
+                continue
+            if len(self._workspace_order) >= 6:
                 errors.append(f"{path.name}：最多导入 6 路")
                 continue
             try:
-                self._loader.submit(path)
-            except RuntimeError as exc:
+                kind = infer_media_kind(path)
+                if kind == "image":
+                    task = self._image_loader.submit(path)
+                    self._image_pending.add(task)
+                else:
+                    task = self._loader.submit(path)
+                    self._pending_add += 1
+                self._workspace_order.append(self._task_slot(task))
+            except (OSError, RuntimeError) as exc:
                 errors.append(f"{path.name}：{exc}")
                 continue
-            self._pending_add += 1
-        if self._pending_add:
-            self._status.setText(f"正在后台探测/索引 {self._pending_add} 路；窗口仍可操作")
+        if self._pending_add or self._image_pending:
+            self._status.setText("正在后台读取图像/视频；窗口仍可操作")
         if errors:
-            QMessageBox.warning(self, translate("部分视频未导入"), translate("\n".join(errors)))
+            QMessageBox.warning(self, translate("部分文件未导入"), translate("\n".join(errors)))
 
     def _drain_load_results(self) -> None:
         while (result := self._loader.pop_result()) is not None:
@@ -999,25 +1186,7 @@ class MainWindow(QMainWindow):
             self._on_error(self._load_error_notice)
 
     def _load_images(self, paths: list[Path]) -> None:
-        errors: list[str] = []
-        for path in paths:
-            additions = sum(task.replace_id is None for task in self._image_pending)
-            if len(self._image_assets) + additions >= 6:
-                errors.append(f"{path.name}：最多导入 6 路")
-                continue
-            if not path.is_file():
-                errors.append(f"{path.name}：文件不存在")
-                continue
-            try:
-                task = self._image_loader.submit(path)
-            except RuntimeError as exc:
-                errors.append(f"{path.name}：{exc}")
-                continue
-            self._image_pending.add(task)
-        if self._image_pending:
-            self._status.setText(f"正在读取 {len(self._image_pending)} 张图像")
-        if errors:
-            QMessageBox.warning(self, translate("部分图像未导入"), translate("\n".join(errors)))
+        self.load_files(paths)
 
     def _apply_image_result(self, result: ImageLoadResult) -> None:
         task = result.task
@@ -1030,8 +1199,8 @@ class MainWindow(QMainWindow):
         if replace_id is not None:
             del self._image_replacements[replace_id]
         if result.error:
-            if self.media_kind == "image":
-                self._on_error(f"{task.path.name}：{result.error}；原画面未改变")
+            self._discard_workspace_slot(self._task_slot(task))
+            self._on_error(f"{task.path.name}：{result.error}；原画面未改变")
             return
         assert result.asset is not None and result.frame is not None
         old_bytes = (
@@ -1039,10 +1208,10 @@ class MainWindow(QMainWindow):
         )
         used = sum(frame.rgb.nbytes for frame in self._image_frames.values())
         if used - old_bytes + result.frame.rgb.nbytes > 1024 * 1024 * 1024:
-            if self.media_kind == "image":
-                self._on_error("图像组 RGB 缓冲超过 1 GiB，原画面未改变")
+            self._discard_workspace_slot(self._task_slot(task))
+            self._on_error("图像组 RGB 缓冲超过 1 GiB，原画面未改变")
             return
-        selected = self._selected_asset_id() if self.media_kind == "image" else None
+        selected = self._selected_asset_id()
         asset = result.asset
         if replace_id is None:
             self._image_assets[asset.asset_id] = asset
@@ -1055,37 +1224,43 @@ class MainWindow(QMainWindow):
             }
             self._image_frames.pop(replace_id, None)
             self._image_notes.pop(replace_id, None)
-            if self._maximized_id == replace_id and self.media_kind == "image":
+            if self._maximized_id == replace_id:
                 self._maximized_id = asset.asset_id
             if selected == replace_id:
                 selected = asset.asset_id
         else:
             return
+        self._install_workspace_slot(task, asset.asset_id)
         self._image_frames[asset.asset_id] = result.frame
         self._image_notes[asset.asset_id] = result.note
         self._image_revision += 1
         self._image_snapshot = None
-        if self.media_kind == "image":
-            self._refresh_file_list(selected_id=selected)
-            self._refresh_layout()
-            self._present_images()
+        self._refresh_file_list(selected_id=selected)
+        self._refresh_layout()
+        self._present_images()
 
     def _present_images(self) -> None:
-        if self.media_kind != "image":
-            return
-        if not self._image_assets:
-            self._canvas.clear_group()
-            self._status.setText("添加本地图像；可比较 1–6 张")
-            return
-        if self._image_snapshot is None:
-            self._image_snapshot = FrameGroupSnapshot(
-                (1, self._image_revision, 0),
+        if self._transport is not None and self._transport.displayed is not None:
+            self._on_group(self._transport.displayed)
+        elif not self._assets and self._image_assets:
+            snapshot = FrameGroupSnapshot(
+                (0, self._image_revision, 0),
                 Fraction(0),
                 0,
-                {key: self._image_frames[key] for key in self._image_assets},
+                dict(self._image_frames),
+                dict.fromkeys(self._image_frames, "static"),
             )
-        self._canvas.submit_group(self._image_snapshot)
-        self._status.setText(f"正在对比 {len(self._image_assets)} 张图像 · RGB8 预览 · 源文件只读")
+            self._image_snapshot = snapshot
+            self._display_snapshot = snapshot
+            self._canvas.submit_group(snapshot)
+            self._status.setText(
+                f"正在对比 {len(self._image_assets)} 张图像 · RGB8 预览 · 源文件只读"
+            )
+        elif not self._active_assets():
+            self._display_snapshot = None
+            self._canvas.clear_group()
+            self._status.setText("选择工作文件夹，双击图像/视频添加到工作区（最多 6 路）")
+        self._refresh_transport_controls()
 
     def _apply_load_result(self, result: LoadResult) -> None:
         if result.task in self._cancelled_loads:
@@ -1100,6 +1275,7 @@ class MainWindow(QMainWindow):
             del self._pending_replacements[replace_id]
         partial_id = self._partial_tasks.get(result.task)
         if result.error:
+            self._discard_workspace_slot(self._task_slot(result.task))
             if partial_id is not None:
                 self._partial_tasks.pop(result.task, None)
                 self._assets.pop(partial_id, None)
@@ -1108,6 +1284,7 @@ class MainWindow(QMainWindow):
                 self._frame_offsets.pop(partial_id, None)
                 self._excluded_ids.discard(partial_id)
                 self._held_frames.pop(partial_id, None)
+                self._discard_workspace_slot(partial_id)
                 self._refresh_file_list()
                 self._refresh_reference_combo()
                 self._rebuild_transport()
@@ -1170,6 +1347,7 @@ class MainWindow(QMainWindow):
         else:
             return
         self._timelines[asset.asset_id] = result.timeline
+        self._install_workspace_slot(result.task, asset.asset_id)
         self._refresh_file_list(selected_id=selected)
         self._refresh_reference_combo(
             replaced=(replace_id, asset.asset_id) if replace_id is not None else None
@@ -1189,6 +1367,7 @@ class MainWindow(QMainWindow):
         self._image_frames.pop(asset_id, None)
         self._image_notes.pop(asset_id, None)
         self._image_replacements.pop(asset_id, None)
+        self._discard_workspace_slot(asset_id)
         if self._maximized_id == asset_id:
             self._maximized_id = None
         self._image_revision += 1
@@ -1199,7 +1378,7 @@ class MainWindow(QMainWindow):
         self._present_images()
 
     def remove_selected(self) -> None:
-        if self.media_kind == "image":
+        if self._selected_asset_id() in self._image_assets:
             self._remove_selected_image()
             return
         asset_id = self._selected_asset_id()
@@ -1216,6 +1395,7 @@ class MainWindow(QMainWindow):
         previous_spec = self._transport.spec if self._transport else None
         displayed = self._transport.displayed if self._transport else None
         del self._assets[asset_id]
+        self._discard_workspace_slot(asset_id)
         del self._timelines[asset_id]
         self._excluded_ids.discard(asset_id)
         self._held_frames.pop(asset_id, None)
@@ -1244,10 +1424,22 @@ class MainWindow(QMainWindow):
                 )
         self._rebuild_transport(anchor_time=anchor_time, anchor_ui_frame=anchor_ui_frame)
         if not self._assets:
-            self._status.setText("已移除全部视频；可添加本地视频")
+            self._present_images()
 
     def replace_selected(self, path: Path) -> bool:
-        if self.media_kind == "image":
+        asset_id = self._selected_asset_id()
+        if asset_id is None:
+            self._on_error("请先点击需要替换的画面")
+            return False
+        try:
+            kind = infer_media_kind(path)
+        except OSError as exc:
+            self._on_error(f"替换失败，原画面未改变：{exc}")
+            return False
+        if kind != self._active_assets()[asset_id].media_kind:
+            self._on_error("替换请选择相同类型的文件；不同类型可移除后双击添加")
+            return False
+        if asset_id in self._image_assets:
             asset_id = self._selected_asset_id()
             if asset_id is None:
                 self._on_error("请先选中需要替换的图像")
@@ -1308,19 +1500,7 @@ class MainWindow(QMainWindow):
         target = index + direction
         if not 0 <= target < len(order):
             return
-        order[index], order[target] = order[target], order[index]
-        if self.media_kind == "image":
-            self._image_assets = {key: assets[key] for key in order}
-            self._image_revision += 1
-            self._image_snapshot = None
-        else:
-            self._assets = {key: assets[key] for key in order}
-        self._refresh_file_list(selected_id=asset_id)
-        if self.media_kind == "video":
-            self._refresh_reference_combo()
-        self._refresh_layout()
-        if self.media_kind == "image":
-            self._present_images()
+        self._swap_assets(asset_id, order[target])
 
     def _rebuild_transport(
         self,
@@ -1341,6 +1521,7 @@ class MainWindow(QMainWindow):
         self._refresh_layout()
         order = tuple(self._assets)
         if not order:
+            self._present_images()
             return
         reference_id = self._reference_combo.currentData() or order[0]
         if previous_spec and reference_id != previous_spec.reference_id:
@@ -1362,6 +1543,7 @@ class MainWindow(QMainWindow):
         )
         transport = TransportController(self._assets, self._timelines, spec, parent=self)
         self._transport = transport
+        self._refresh_transport_controls()
         transport.set_speed(Fraction(self._speed_combo.currentData()))
         self._loop_button.blockSignals(True)
         self._loop_button.setChecked(False)
@@ -1409,19 +1591,28 @@ class MainWindow(QMainWindow):
         self._status.setText(f"{len(participants)} 路参与同步，等待完整帧组")
 
     def _on_group(self, snapshot) -> None:
-        if self.media_kind == "image":
+        if self._transport is None or snapshot is not self._transport.displayed:
             return
-        if self._held_frames:
+        if set(snapshot.frames) != set(self._transport.spec.participants):
+            return
+        if self._held_frames or self._image_frames:
             snapshot_for_canvas = FrameGroupSnapshot(
                 snapshot.group_id,
                 snapshot.requested_global_time,
                 snapshot.reference_ordinal,
-                {**snapshot.frames, **self._held_frames},
-                {**snapshot.boundary_states, **dict.fromkeys(self._held_frames, "detached")},
+                {**snapshot.frames, **self._held_frames, **self._image_frames},
+                {
+                    **snapshot.boundary_states,
+                    **dict.fromkeys(self._held_frames, "detached"),
+                    **dict.fromkeys(self._image_frames, "static"),
+                },
                 snapshot.mapping_revision,
             )
         else:
             snapshot_for_canvas = snapshot
+        if set(snapshot_for_canvas.frames) != set(self._active_assets()):
+            return
+        self._display_snapshot = snapshot_for_canvas
         self._canvas.submit_group(snapshot_for_canvas)
         self._time_input.setText(format_timecode(snapshot.requested_global_time))
         self._frame_input.setText(str(snapshot.reference_ordinal + 1))
@@ -1445,6 +1636,7 @@ class MainWindow(QMainWindow):
             self._slider.blockSignals(False)
         self._status.setText(
             f"已同步显示 {len(snapshot.frames)} 路"
+            + (f"，{len(self._image_frames)} 张静态图像" if self._image_frames else "")
             + (f"，{len(self._held_frames)} 路脱离同步" if self._held_frames else "")
             + " · "
             f"组 {snapshot.group_id} · 缓存 {self._transport.cache.used_bytes // (1024 * 1024)} MiB"
@@ -1454,8 +1646,6 @@ class MainWindow(QMainWindow):
         self._range_notice = None
 
     def _on_state(self, state: TransportState) -> None:
-        if self.media_kind == "image":
-            return
         playing = state in {TransportState.PLAYING, TransportState.BUFFERING}
         self._play_button.setText("暂停" if playing else "播放")
 
@@ -1465,7 +1655,11 @@ class MainWindow(QMainWindow):
     def _toggle_play(self) -> None:
         if self._transport is None:
             return
-        if self._transport.state in {TransportState.PLAYING, TransportState.BUFFERING}:
+        if (
+            self._transport.state in {TransportState.PLAYING, TransportState.BUFFERING}
+            or self._transport._resume_after_seek
+            or self._transport._queued_resume
+        ):
             self._transport.pause()
         else:
             self._transport.play()
@@ -1617,7 +1811,7 @@ class MainWindow(QMainWindow):
             return
         self._canvas.clear_annotations()
         self._pending_annotated_export = (target, layout, image_format, quality)
-        self._annotation_bar.setVisible(True)
+        self._set_aux_visibility(self._annotation_bar, True)
         self._canvas.set_annotating(True)
         self._status.setText(
             "标注模式：在画面上拖拽绘画；取消“标注联动”可只画起笔区域；完成后点“完成并导出”"
@@ -1640,7 +1834,7 @@ class MainWindow(QMainWindow):
     def _cancel_annotation_export(self) -> None:
         if self._saving_annotated_export:
             return
-        self._annotation_bar.setVisible(False)
+        self._set_aux_visibility(self._annotation_bar, False)
         self._canvas.set_annotating(False)
         self._canvas.clear_annotations()
         self._pending_annotated_export = None
@@ -1702,7 +1896,7 @@ class MainWindow(QMainWindow):
                     name=asset.label,
                     info=(
                         f"{asset.coded_width}×{asset.coded_height} · {asset.codec_name}"
-                        if self.media_kind == "image"
+                        if asset.media_kind == "image"
                         else (
                             f"{translate('帧')} {{frame}} · PTS {{pts}}{{detached}}"
                             if language() != "zh_CN"
@@ -1723,7 +1917,7 @@ class MainWindow(QMainWindow):
                     )
                     + (
                         f" · {translate(preview_warning(asset.color_info))}"
-                        if self.media_kind == "video" and preview_warning(asset.color_info)
+                        if asset.media_kind == "video" and preview_warning(asset.color_info)
                         else ""
                     ),
                 )
@@ -1772,8 +1966,8 @@ class MainWindow(QMainWindow):
             regions=self._canvas.view_regions,
             device_pixel_ratio=self._canvas.devicePixelRatioF(),
             display_asset_ids=tuple(tile.asset_id for tile in tiles),
-            time_offsets=dict(self._time_offsets) if self.media_kind == "video" else {},
-            frame_offsets=dict(self._frame_offsets) if self.media_kind == "video" else {},
+            time_offsets=dict(self._time_offsets),
+            frame_offsets=dict(self._frame_offsets),
             target_path=target,
             composite=composite,
             tiles=tiles,
@@ -1813,16 +2007,19 @@ class MainWindow(QMainWindow):
             self._message_open = False
 
     def _current_display_snapshot(self) -> FrameGroupSnapshot | None:
-        if self.media_kind == "image":
-            display = self._canvas._snapshot
-            return display if display is self._image_snapshot else None
-        core = self._transport.displayed if self._transport else None
         display = self._canvas._snapshot
-        if core is None or display is None:
+        if display is None or display is not self._display_snapshot:
             return None
-        if not self._held_frames:
-            return display if display is core else None
-        if display.group_id != core.group_id or set(display.frames) != set(self._assets):
+        if set(display.frames) != set(self._active_assets()):
+            return None
+        if any(display.frames[key] is not frame for key, frame in self._image_frames.items()):
+            return None
+        if not self._assets:
+            return display
+        core = self._transport.displayed if self._transport else None
+        if core is None:
+            return None
+        if display.group_id != core.group_id:
             return None
         if any(display.frames[key] is not frame for key, frame in core.frames.items()):
             return None
@@ -1831,7 +2028,7 @@ class MainWindow(QMainWindow):
         return display
 
     def _active_spec(self) -> TimelineSpec:
-        if self.media_kind == "video":
+        if self._assets:
             assert self._transport is not None
             return self._transport.spec
         keys = tuple(self._image_assets)
@@ -1854,8 +2051,8 @@ class MainWindow(QMainWindow):
             view_image=view_image,
             device_pixel_ratio=self._canvas.devicePixelRatioF(),
             display_asset_ids=tuple(self._active_assets()),
-            time_offsets=dict(self._time_offsets) if self.media_kind == "video" else {},
-            frame_offsets=dict(self._frame_offsets) if self.media_kind == "video" else {},
+            time_offsets=dict(self._time_offsets),
+            frame_offsets=dict(self._frame_offsets),
         )
         try:
             self._screenshot_worker.submit(request)
@@ -1909,7 +2106,7 @@ class MainWindow(QMainWindow):
                 self._canvas.set_annotating(True)
             else:
                 self._pending_annotated_export = None
-                self._annotation_bar.setVisible(False)
+                self._set_aux_visibility(self._annotation_bar, False)
                 self._canvas.clear_annotations()
         if result.error:
             self._on_error(f"导出失败（组 {result.group_id}）：{result.error}")
@@ -2073,8 +2270,11 @@ class MainWindow(QMainWindow):
             self._on_error(str(exc))
 
     def keyPressEvent(self, event) -> None:
+        if QApplication.instance().activeModalWidget() is not None:
+            super().keyPressEvent(event)
+            return
         if event.key() == Qt.Key.Key_O and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
-            self._choose_files()
+            self._file_browser.choose_directory()
             return
         if isinstance(self.focusWidget(), QLineEdit):
             super().keyPressEvent(event)
@@ -2097,11 +2297,11 @@ class MainWindow(QMainWindow):
             self._set_loop_start()
         elif event.key() == Qt.Key.Key_O:
             self._set_loop_end()
-        elif event.key() == Qt.Key.Key_M:
-            self._add_marker()
         elif event.key() in {Qt.Key.Key_Home, Qt.Key.Key_End}:
             self._seek_edge(event.key() == Qt.Key.Key_End)
         elif event.key() == Qt.Key.Key_Escape:
+            if self._canvas.cancel_interaction():
+                return
             if self._roi_button.isChecked():
                 self._roi_button.setChecked(False)
             elif self._maximized_id is not None:
@@ -2146,6 +2346,7 @@ class MainWindow(QMainWindow):
             self._closing_confirmed = True
         self._loader_timer.stop()
         self._screenshot_timer.stop()
+        QApplication.instance().removeEventFilter(self)
         QApplication.instance().styleHints().colorSchemeChanged.disconnect(
             self._on_system_color_scheme_changed
         )

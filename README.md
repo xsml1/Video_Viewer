@@ -1,6 +1,6 @@
 # Video Viewer（视频与图像对比工具）
 
-本地 Windows 桌面应用，顶部可切换视频对比和图像对比。每种模式 1 路可独立查看，2–6 路可对比；视频按真实 PTS 或显示帧号同步，图像做静态对比。**原计划 P0/P1 和干净机器发布验收仍以实际报告为准**，状态见 [进度](docs/PROGRESS.md)和[验收](reports/ACCEPTANCE.md)。输入文件只读，不上传、不转码。操作细节见 [中文使用说明](docs/USER_GUIDE.zh-CN.md)。
+本地 Windows 桌面应用，图像和视频共用一个工作区，可混合添加 1–6 路。选择工作文件夹后，在右侧双击文件添加；双击文件夹进入下一级，可返回上一级、后退、前进和刷新。视频按真实 PTS 或显示帧号同步，图像保持静止。**原计划 P0/P1 和干净机器发布验收仍以实际报告为准**，状态见 [进度](docs/PROGRESS.md)和[验收](reports/ACCEPTANCE.md)。输入文件只读，不上传、不转码。操作细节见 [中文使用说明](docs/USER_GUIDE.zh-CN.md)。
 
 ## 安装与启动（Windows 10/11 x64）
 
@@ -13,19 +13,21 @@ uv sync --locked --extra dev
 & .\.venv\Scripts\python.exe -m video_compare --ffprobe 'C:\path\to\ffmpeg\bin\ffprobe.exe'
 ```
 
-请把示例中的 FFmpeg 路径改成实际文件路径。`uv` 会按 `uv.lock` 建立项目环境并使用 Python 3.11；之后可双击项目中的 `scripts\run_video_compare.cmd` 启动（视频模式需把 FFmpeg 的 `bin` 加入 PATH，或在命令行继续传 `--ffprobe`）。只比较图片时，可直接运行：
+请把示例中的 FFmpeg 路径改成实际文件路径。`uv` 会按 `uv.lock` 建立项目环境并使用 Python 3.11；之后可双击项目中的 `scripts\run_video_compare.cmd` 启动（播放视频需把 FFmpeg 的 `bin` 加入 PATH，或在命令行继续传 `--ffprobe`）。可直接打开图像，也可同时传入视频：
 
 ```powershell
-& .\.venv\Scripts\python.exe -m video_compare --mode image 'C:\path\to\first.png' 'C:\path\to\second.heic'
+& .\.venv\Scripts\python.exe -m video_compare 'C:\path\to\first.png' 'C:\path\to\second.heic'
 ```
 
 想生成无需 Python 的 Windows 程序文件夹，执行 `uv sync --locked --extra dev --extra build`，再运行 `powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1 -FfmpegBin 'C:\path\to\ffmpeg\bin'`。构建结果位于 `dist\VideoCompare.dist\main.exe`；复制或压缩时应保留整个 `VideoCompare.dist` 文件夹。构建后的本机自检可双击文件夹内的 `verify_clean_windows.cmd`。另一台干净 Windows 机器尚未实测，详见[验收报告](reports/ACCEPTANCE.md)。
 
-窗口结构：顶部单行工具栏（全局操作 + “设置”“侧栏”开关）、中间对比画布、画面下方播放条（播放/步进/速度/循环/进度/时间与帧号定位）、右侧可调信息栏（文件列表、Offset、Marker；“»”隐藏）。每路画面的左上角显示文件名，右下角显示帧号/PTS/提醒，文字颜色默认绿色并可单独设置。“设置”分为**主题**与**语言**两栏：主题中包含原有明暗模式、整体色彩（清爽极简、莫兰迪、奶油风、复古、赛博朋克、马卡龙）和四个颜色角色（工作区、功能区、强调色、视频信息）；语言可选简体中文、繁體中文、English、日本語、한국어、Français、Deutsch、Español，选项名称始终使用各自语言的写法。切换立即生效并在重启后保留。每个颜色角色都用主题色 8 列 × 6 行（原色 + 5 档深浅）及 15 个标准色挑选，也可“跟随色系”。“跟随系统”会在收到系统明暗变化通知后自动刷新。颜色只改变界面与画布装饰，不改变媒体像素、播放位置与导出内容。
+窗口结构：顶部单行工具栏、中间对比画布、画面下方播放条、右侧可调文件夹浏览器（“»”隐藏）。左键把画面拖到另一格，松手即可交换位置；同格拖动或中键拖动平移，ROI/标注模式仍用于框选和绘画。空格在主窗口中只控制播放/暂停，不触发当前焦点按钮或添加文件；仅图像时播放控件禁用。右键画面可从工作区移除或替换，不删除源文件。每路画面的左上角显示文件名，右下角显示帧号/PTS或图像信息，文字颜色可在设置里修改。设置中的主题、八种语言及颜色角色仍保持即时切换与本地保存。
 
 ## 当前状态
 
-顶部可切换“视频对比 / 图像对比”。图像模式支持 1–6 张本地图像的导入、替换、移除、排序、联动缩放/平移/ROI、原生像素查看、保存视图/各图及标注导出。静态图像没有播放时间轴，视频模式仍保留原有同步播放能力。图片由 Pillow、pillow-heif、imagecodecs、tifffile 和 Qt 插件按实际内容读取，相机 RAW 由 LibRaw 显影。已验证 29 个图像样本，增加 JPEG XL/XR/LS、JPEG 2000、QOI、PSD 合成图及 16 位 PNG/TIFF；16 位转 RGB8 的限制会明确显示。完整格式、色彩转换及未验证变体见 [格式支持说明](docs/FORMAT_SUPPORT.zh-CN.md)。多页/动画只看首页，透明区域按白底预览，原件只读。完整边界见 [已知问题](KNOWN_ISSUES.md)。
+顶部“全屏”或 F11 进入工作区全屏，只显示画面和右上角 ×。空格播放/暂停，左右键按当前设置步进，Ctrl+滚轮缩放，Esc 或 × 退出并恢复原窗口与侧栏。图像保持静止。全屏与普通窗口共用同一画布和视频解码器。
+
+图像和视频可以在同一工作区同步查看、联动缩放/平移/ROI、原生像素查看、保存各路预览和标注导出。图像不参与视频时间轴，也不缩短视频公共播放区间。图片由 Pillow、pillow-heif、imagecodecs、tifffile 和 Qt 插件读取，相机 RAW 由 LibRaw 显影。此前验证的格式样本与未验证变体见 [格式支持说明](docs/FORMAT_SUPPORT.zh-CN.md)。多页/动画只看首页，透明区域按白底预览，原件只读。旧 `--mode image/video` 参数继续兼容启动脚本，不再切换工作区。完整边界见 [已知问题](KNOWN_ISSUES.md)。
 
 视频真实解码、统一帧组和 GUI 已接通；各路真实首帧由快速探测线程取得，完整索引在另一个后台线程逐段建立。已索引区间可播放，超出覆盖区的定位会等待索引追上。普通视频已验证 30 组实际编码/容器，HDR/广色域另验证 9 组：PQ、HLG、BT.2020 SDR 和 P3 统一以明确标注的 SDR RGB8 预览显示，并保留源色彩信息。本版两路 1080p PQ 在原生 OpenGL 运行 30 分钟，完成 12,981 个完整组及 899 次随机定位，缓存、队列、线程及显存保持有界，关闭后资源释放。运行期间还进行了构建/其他验证，不作为独占机器实时帧率保证。更多限制见 [已知问题](KNOWN_ISSUES.md)。
 
@@ -44,7 +46,7 @@ uv sync --locked --extra dev
 & .\.venv\Scripts\python.exe -m video_compare --ffprobe 'C:\path\to\ffprobe.exe'
 ```
 
-直接以图像模式打开本地文件：
+直接打开本地图像（也可以混合视频路径）：
 
 ```powershell
 & .\.venv\Scripts\python.exe -m video_compare --mode image 'C:\path\to\first.png' 'C:\path\to\second.heic'
@@ -102,7 +104,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1 -FfmpegBin 'C
 ## 产品边界
 
 - 输入视频只读；索引、缓存和截图使用独立位置。
-- HDR/PQ/HLG 或 BT.2020 源在导入时拒绝并显示其元信息摘要，避免把不可信的 SDR 转换用于颜色判断；10-bit SDR 当前只提供 RGB8 预览并明确标注。
+- 已支持的 PQ/HLG、BT.2020 NCL 和 P3 转为明确标注的 SDR RGB8 预览；不输出原生 HDR，不应用动态元数据。BT.2020 CL 与非兼容 Dolby Vision 拒绝导入。
 - P0/P1 不包含音频、转码、视频导出或客观质量指标。
 - P2 的 Workspace、A/B、分割线、冻结、ROI 导出、自定义快捷键和全屏不在本轮默认范围。
 
@@ -119,4 +121,4 @@ uv sync --locked --extra dev
 & .\.venv\Scripts\python.exe -m video_compare --ffprobe 'C:\path\to\ffmpeg\bin\ffprobe.exe'
 ```
 
-Use the mode selector at the top to choose **Video comparison** or **Image comparison**, then add or drag in local files. The toolbar controls linked zoom, pan, ROI and comparison image export. During annotation export, clear **Link annotations to all panes** to keep each new rectangle or freehand stroke in the pane where it starts. Open **Settings → Language** to switch among eight languages; each language is listed by its own name. For image-only startup, add `--mode image` and image paths to the command. To build a standalone folder, run `uv sync --locked --extra dev --extra build` followed by `powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1 -FfmpegBin 'C:\path\to\ffmpeg\bin'`; keep the whole `dist\VideoCompare.dist` folder together. See the [Chinese user guide](docs/USER_GUIDE.zh-CN.md) and [known limitations](KNOWN_ISSUES.md) for details.
+Choose a working folder, then double-click images or videos in the right sidebar to add them to one shared workspace. Double-click folders to enter them; use the up, back, forward and refresh buttons to navigate. Drag a pane onto another pane to swap positions. Space only toggles video playback/pause throughout the main window; still images remain unchanged. The toolbar controls linked zoom, pan, ROI and comparison image export. During annotation export, clear **Link annotations to all panes** to keep new strokes in their starting pane. **Settings → Language** retains eight languages. To build a standalone folder, run `uv sync --locked --extra dev --extra build` followed by `powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1 -FfmpegBin 'C:\path\to\ffmpeg\bin'`; keep the whole `dist\VideoCompare.dist` folder together. See the [Chinese user guide](docs/USER_GUIDE.zh-CN.md) and [known limitations](KNOWN_ISSUES.md) for details.

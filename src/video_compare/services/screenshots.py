@@ -98,9 +98,10 @@ def _metadata(
 ) -> dict:
     snapshot = request.snapshot
     display_ids = request.display_asset_ids or request.spec.participants
+    kinds = {request.assets[key].media_kind for key in display_ids}
     metadata = {
         "schema_version": 1,
-        "media_kind": request.assets[request.spec.reference_id].media_kind,
+        "media_kind": next(iter(kinds)) if len(kinds) == 1 else "mixed",
         "kind": kind,
         "export_asset_id": asset_id,
         "group_id": list(snapshot.group_id),
@@ -142,7 +143,11 @@ def _metadata(
                     asset_id, request.spec.frame_offsets.get(asset_id, 0)
                 ),
                 "time_sync_state": (
-                    "participating" if asset_id in request.spec.participants else "detached"
+                    "static"
+                    if request.assets[asset_id].media_kind == "image"
+                    else "participating"
+                    if asset_id in request.spec.participants
+                    else "detached"
                 ),
                 "view_region": {
                     "center_u": request.regions[asset_id].center_u,

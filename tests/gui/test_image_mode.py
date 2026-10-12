@@ -68,7 +68,7 @@ def test_real_still_formats_orientation_and_alpha(qtbot, tmp_path: Path) -> None
 
 
 @pytest.mark.gui
-def test_image_mode_real_import_replace_export_and_video_return(
+def test_still_workspace_real_import_replace_export_and_video_add_remove(
     qtbot, tmp_path: Path, monkeypatch
 ) -> None:
     first = tmp_path / "red.png"
@@ -88,8 +88,7 @@ def test_image_mode_real_import_replace_export_and_video_return(
     qtbot.addWidget(window)
     window.show()
     monkeypatch.setattr(QMessageBox, "information", lambda *_args: None)
-    window._media_mode.setCurrentIndex(1)
-    assert not window._play_button.isVisible()
+    assert not window._play_button.isEnabled()
     window.load_files([first, second])
     qtbot.waitUntil(
         lambda: len(window._image_assets) == 2 and window.canvas._snapshot is not None, timeout=5000
@@ -150,8 +149,6 @@ def test_image_mode_real_import_replace_export_and_video_return(
         )
         > 20
     )
-    window._media_mode.setCurrentIndex(0)
-    assert window.canvas._snapshot is None
     video = Path(__file__).resolve().parents[1] / "assets/generated/f05_h264_bframes.mp4"
     window.load_files([video])
     qtbot.waitUntil(
@@ -159,11 +156,21 @@ def test_image_mode_real_import_replace_export_and_video_return(
         timeout=5000,
     )
     video_snapshot = window._transport.displayed
-    window._media_mode.setCurrentIndex(1)
+    qtbot.waitUntil(lambda: len(window.canvas._snapshot.frames) == 3, timeout=5000)
     assert len(window._image_assets) == 2
-    assert window.canvas._snapshot is window._image_snapshot
+    assert window.media_kind == "mixed"
+    assert window._play_button.isEnabled()
+    window._select_asset(next(iter(window._assets)))
+    window.remove_selected()
+    qtbot.waitUntil(
+        lambda: window._transport is None and len(window.canvas._snapshot.frames) == 2,
+        timeout=5000,
+    )
+    image_snapshot = window.canvas._snapshot
+    assert window.media_kind == "image"
+    assert not window._play_button.isEnabled()
     window._on_group(video_snapshot)
-    assert window.canvas._snapshot is window._image_snapshot
+    assert window.canvas._snapshot is image_snapshot
     for path, digest in before.items():
         assert hashlib.sha256(path.read_bytes()).hexdigest() == digest
     window.close()

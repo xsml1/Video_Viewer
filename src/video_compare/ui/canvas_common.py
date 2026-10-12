@@ -280,7 +280,7 @@ def paint_group(
         painter.drawText(
             QRectF(0, 0, width, height),
             Qt.AlignmentFlag.AlignCenter,
-            translate("把本地视频或图像拖入窗口，或点击“添加文件”开始对比"),
+            translate("选择工作文件夹，双击图像或视频开始对比，也可以将文件拖入窗口"),
         )
         return
     boxes = pane_boxes(width, height, order, assets, snapshot, layout=layout)

@@ -25,6 +25,8 @@ class CompareCanvas(CanvasInteractionMixin, QOpenGLWidget):
     view_changed = Signal(object)
     annotations_changed = Signal(object)
     panel_double_clicked = Signal(str)
+    panel_selected = Signal(str)
+    panel_swap_requested = Signal(str, str)
     render_failed = Signal(str)
 
     def __init__(self, parent=None) -> None:
@@ -83,6 +85,8 @@ class CompareCanvas(CanvasInteractionMixin, QOpenGLWidget):
     def set_layout(
         self, ordered_asset_ids: tuple[str, ...], assets: Mapping[str, AssetInfo]
     ) -> None:
+        if ordered_asset_ids != self._order or set(assets) != set(self._assets):
+            self.cancel_interaction()
         if set(assets) != set(self._assets):
             self._snapshot = None
             self._pending_snapshot = None
@@ -92,6 +96,7 @@ class CompareCanvas(CanvasInteractionMixin, QOpenGLWidget):
         self.update()
 
     def clear_group(self) -> None:
+        self.cancel_interaction()
         self._snapshot = None
         self._pending_snapshot = None
         self.update()
@@ -226,6 +231,7 @@ class CompareCanvas(CanvasInteractionMixin, QOpenGLWidget):
                 self.annotations,
                 self._annotation_preview,
             )
+            self._paint_swap_feedback(painter)
             if self._render_error:
                 painter.setPen("#ef4444")
                 painter.drawText(12, self.height() - 10, self._render_error)

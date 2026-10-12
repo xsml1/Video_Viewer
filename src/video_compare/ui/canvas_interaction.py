@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QRectF, Qt
-from PySide6.QtGui import QPainterPath, QRegion
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QRegion
+from PySide6.QtWidgets import QApplication
 
 from video_compare.domain.viewport import Rect, ViewRegion
 from video_compare.ui.annotations import SHAPES, Annotation, clamp_point
-from video_compare.ui.canvas_common import hit_content, pane_at, pane_transform
+from video_compare.ui.canvas_common import hit_content, pane_at, pane_boxes, pane_transform
+from video_compare.ui.i18n import translate
 
 
 class CanvasInteractionMixin:
@@ -31,6 +33,11 @@ class CanvasInteractionMixin:
         self._linked = True
         self._roi_mode = False
         self._drag_asset: str | None = None
+        self._drag_button: Qt.MouseButton | None = None
+        self._drag_start: tuple[float, float] | None = None
+        self._drag_regions: dict[str, ViewRegion] | None = None
+        self._swap_started = False
+        self._swap_target: str | None = None
         self._last_pos: tuple[float, float] | None = None
         self._roi_start: tuple[float, float] | None = None
         self._roi_preview: Rect | None = None
@@ -84,6 +91,7 @@ class CanvasInteractionMixin:
         return self._annotating
 
     def set_annotating(self, enabled: bool) -> None:
+        self.cancel_interaction()
         self._annotating = enabled
         self._annotation_start = None
         self._annotation_asset_id = None
@@ -128,6 +136,7 @@ class CanvasInteractionMixin:
     def set_layout_mode(self, mode: str) -> None:
         if mode == self._layout_mode:
             return
+        self.cancel_interaction()
         self._layout_mode = mode
         self.view_changed.emit(self.view_regions)
         self.update()
@@ -174,10 +183,98 @@ class CanvasInteractionMixin:
         self.update()
 
     def set_roi_mode(self, enabled: bool) -> None:
+        self.cancel_interaction()
         self._roi_mode = enabled
         self._roi_start = None
         self._roi_preview = None
         self.update()
+
+    def _pane_at(self, x: float, y: float) -> str | None:
+        return pane_at(
+            self.width(),
+            self.height(),
+            self._order,
+            self._assets,
+            self._snapshot,
+            self._regions,
+            x,
+            y,
+            layout=self._layout_mode,
+        )
+
+    def cancel_interaction(self) -> bool:
+        """Cancel the current pointer gesture, including any prospective pane swap."""
+        active = self._drag_asset is not None or self._annotation_start is not None
+        if self._swap_started and self._drag_regions is not None:
+            self._regions = dict(self._drag_regions)
+            self.view_changed.emit(self.view_regions)
+        self._drag_asset = None
+        self._drag_button = None
+        self._drag_start = None
+        self._drag_regions = None
+        self._last_pos = None
+        self._swap_started = False
+        self._swap_target = None
+        self._roi_start = None
+        self._roi_preview = None
+        self._annotation_start = None
+        self._annotation_asset_id = None
+        self._annotation_points.clear()
+        self._annotation_preview = None
+        self.setCursor(
+            Qt.CursorShape.CrossCursor if self._annotating else Qt.CursorShape.ArrowCursor
+        )
+        if active:
+            self.update()
+        return active
+
+    def _paint_swap_feedback(self, painter: QPainter) -> None:
+        if not self._swap_started or self._drag_asset is None:
+            return
+        boxes = pane_boxes(
+            self.width(),
+            self.height(),
+            self._order,
+            self._assets,
+            self._snapshot,
+            layout=self._layout_mode,
+        )
+        painter.save()
+        for asset_id in (self._drag_asset, self._swap_target):
+            box = boxes.get(asset_id)
+            if box is None:
+                continue
+            target = asset_id == self._swap_target
+            rect = QRectF(box.x + 2, box.y + 2, box.width - 4, box.height - 4)
+            painter.setPen(
+                QPen(
+                    QColor(self._colors.accent),
+                    3,
+                    Qt.PenStyle.SolidLine if target else Qt.PenStyle.DashLine,
+                )
+            )
+            painter.setBrush(QColor(self._colors.accent_fill) if target else Qt.BrushStyle.NoBrush)
+            painter.drawRoundedRect(rect, 6, 6)
+            if target:
+                caption = QRectF(rect.x() + 8, rect.y() + 8, rect.width() - 16, 28)
+                painter.fillRect(caption, QColor(self._colors.overlay_backdrop))
+                painter.setPen(QColor(self._colors.text))
+                painter.drawText(caption, Qt.AlignmentFlag.AlignCenter, translate("松开交换画面"))
+        painter.restore()
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() == Qt.Key.Key_Escape and self.cancel_interaction():
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self.cancel_interaction()
+        super().leaveEvent(event)
+
+    def hideEvent(self, event) -> None:
+        self.cancel_interaction()
+        super().hideEvent(event)
 
     def reset_fit(self) -> None:
         if self._pixel_mode:
@@ -314,41 +411,43 @@ class CanvasInteractionMixin:
         event.accept()
 
     def mousePressEvent(self, event) -> None:
-        if event.button() != Qt.MouseButton.LeftButton:
+        if event.button() not in {Qt.MouseButton.LeftButton, Qt.MouseButton.MiddleButton}:
             event.ignore()
             return
+        self.cancel_interaction()
         point = event.position()
         if self._annotating:
-            if self._begin_annotation(point.x(), point.y()):
+            if event.button() == Qt.MouseButton.LeftButton and self._begin_annotation(
+                point.x(), point.y()
+            ):
+                self.panel_selected.emit(self._annotation_asset_id)
                 event.accept()
             else:
                 event.ignore()
             return
         hit = self._hit(point.x(), point.y())
-        if hit is None:
+        asset_id = self._pane_at(point.x(), point.y())
+        if asset_id is None or (
+            (self._roi_mode or event.button() == Qt.MouseButton.MiddleButton) and hit is None
+        ):
             event.ignore()
             return
-        self._drag_asset = hit[0]
+        self._drag_asset = asset_id
+        self._drag_button = event.button()
         self._last_pos = (point.x(), point.y())
-        if self._roi_mode:
+        self._drag_start = self._last_pos
+        self._drag_regions = dict(self._regions)
+        if self._roi_mode and event.button() == Qt.MouseButton.LeftButton:
             self._roi_start = self._last_pos
+        self.panel_selected.emit(asset_id)
         event.accept()
 
     def mouseDoubleClickEvent(self, event) -> None:
+        self.cancel_interaction()
         if event.button() != Qt.MouseButton.LeftButton or not self._order:
             event.ignore()
             return
-        asset_id = pane_at(
-            self.width(),
-            self.height(),
-            self._order,
-            self._assets,
-            self._snapshot,
-            self._regions,
-            event.position().x(),
-            event.position().y(),
-            layout=self._layout_mode,
-        )
+        asset_id = self._pane_at(event.position().x(), event.position().y())
         if asset_id is not None:
             self.panel_double_clicked.emit(asset_id)
             event.accept()
@@ -365,6 +464,26 @@ class CanvasInteractionMixin:
             return
         point = event.position()
         x, y = point.x(), point.y()
+        if self._drag_button == Qt.MouseButton.LeftButton and self._roi_start is None:
+            target = self._pane_at(x, y)
+            start_x, start_y = self._drag_start
+            moved = abs(x - start_x) + abs(y - start_y) >= QApplication.startDragDistance()
+            if not self._swap_started and moved and target != self._drag_asset:
+                # Same-pane drags retain Pan. Crossing its boundary turns this into a
+                # layout gesture, restoring the initial view so swapping never pans.
+                self._swap_started = True
+                self._regions = dict(self._drag_regions)
+                self.view_changed.emit(self.view_regions)
+            if self._swap_started:
+                self._swap_target = target if target != self._drag_asset else None
+                self.setCursor(
+                    Qt.CursorShape.ClosedHandCursor
+                    if self._swap_target is not None
+                    else Qt.CursorShape.ForbiddenCursor
+                )
+                self.update()
+                event.accept()
+                return
         if self._roi_start is not None:
             start_x, start_y = self._roi_start
             self._roi_preview = Rect(
@@ -391,12 +510,25 @@ class CanvasInteractionMixin:
         event.accept()
 
     def mouseReleaseEvent(self, event) -> None:
-        if self._annotating and self._annotation_start is not None:
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and self._annotating
+            and self._annotation_start is not None
+        ):
             self._finish_annotation(event.position().x(), event.position().y())
             event.accept()
             return
-        if event.button() != Qt.MouseButton.LeftButton or self._drag_asset is None:
+        if event.button() != self._drag_button or self._drag_asset is None:
             event.ignore()
+            return
+        point = event.position()
+        if self._swap_started:
+            source = self._drag_asset
+            target = self._pane_at(point.x(), point.y())
+            self.cancel_interaction()
+            if target is not None and target != source:
+                self.panel_swap_requested.emit(source, target)
+            event.accept()
             return
         if self._roi_start is not None:
             point = event.position()
@@ -439,9 +571,5 @@ class CanvasInteractionMixin:
                     self._set_region(self._drag_asset, selected)
                 except ValueError:
                     self._roi_preview = None
-        self._drag_asset = None
-        self._last_pos = None
-        self._roi_start = None
-        self._roi_preview = None
-        self.update()
+        self.cancel_interaction()
         event.accept()

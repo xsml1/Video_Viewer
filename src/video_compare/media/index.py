@@ -3,7 +3,8 @@ from __future__ import annotations
 import sqlite3
 from bisect import bisect_right
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from fractions import Fraction
 from pathlib import Path
 
@@ -64,8 +65,15 @@ class FrameIndexRepository:
                 """
             )
 
-    def _connect(self) -> sqlite3.Connection:
-        return sqlite3.connect(self.path, timeout=20)
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        connection = sqlite3.connect(self.path, timeout=20)
+        try:
+            # sqlite3's own context commits/rolls back, but does not close the handle.
+            with connection:
+                yield connection
+        finally:
+            connection.close()
 
     def state(self, asset: AssetInfo) -> IndexState:
         with self._connect() as conn:

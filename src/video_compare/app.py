@@ -52,8 +52,7 @@ def main(argv: list[str] | None = None) -> int:
         else None,
     )
     window.show()
-    if args.mode == "image":
-        window._media_mode.setCurrentIndex(1)
+    # --mode remains accepted for older launch scripts; files now share one workspace.
     if args.files:
         window.load_files(args.files)
     if args.self_test_output is not None:

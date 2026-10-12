@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import random
 import shutil
+import sqlite3
 import subprocess
 from dataclasses import replace
 from fractions import Fraction
@@ -201,6 +202,40 @@ def test_duplicate_route_reuses_complete_metadata_index(
     assert copied.entries == original.entries
     assert copied.end_time == original.end_time
     assert repository.state(second) is IndexState.COMPLETE
+
+
+@pytest.mark.integration
+def test_real_index_operations_release_sqlite_file_immediately(
+    media_dir: Path, tmp_path: Path, monkeypatch
+) -> None:
+    connect = sqlite3.connect
+    retained_connections: list[sqlite3.Connection] = []
+
+    def retained_connect(*args, **kwargs) -> sqlite3.Connection:
+        connection = connect(*args, **kwargs)
+        retained_connections.append(connection)
+        return connection
+
+    monkeypatch.setattr("video_compare.media.index.sqlite3.connect", retained_connect)
+    source = media_dir / "f05_h264_bframes.mp4"
+    first = probe_video(source, ffprobe_path=_binary("ffprobe"), asset_id="first")
+    duplicate = replace(first, asset_id="duplicate")
+    path = tmp_path / "frame-index.sqlite3"
+    repository = FrameIndexRepository(path)
+    timeline = repository.build(first, chunk_size=11)
+    assert timeline.frame_count == 72
+    assert repository.state(first) is IndexState.COMPLETE
+    assert repository.lookup_ordinal(first, 17).entry.pts == timeline.entries[17].pts
+    assert repository.lookup_time(first, Fraction(17, 30)).entry.ordinal == 17
+    assert repository.load(first).entries == timeline.entries
+    assert repository.build(duplicate).entries == timeline.entries
+    assert len(retained_connections) > 10
+    for connection in retained_connections:
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            connection.execute("SELECT 1")
+    moved = path.rename(tmp_path / "renamed-frame-index.sqlite3")
+    moved.unlink()
+    assert not path.exists() and not moved.exists()
 
 
 @pytest.mark.integration

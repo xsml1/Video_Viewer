@@ -18,6 +18,8 @@ class SoftwareCompareCanvas(CanvasInteractionMixin, QWidget):
     view_changed = Signal(object)
     annotations_changed = Signal(object)
     panel_double_clicked = Signal(str)
+    panel_selected = Signal(str)
+    panel_swap_requested = Signal(str, str)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -34,6 +36,8 @@ class SoftwareCompareCanvas(CanvasInteractionMixin, QWidget):
     def set_layout(
         self, ordered_asset_ids: tuple[str, ...], assets: Mapping[str, AssetInfo]
     ) -> None:
+        if ordered_asset_ids != self._order or set(assets) != set(self._assets):
+            self.cancel_interaction()
         if set(assets) != set(self._assets):
             self._snapshot = None
         self._order = ordered_asset_ids
@@ -42,6 +46,7 @@ class SoftwareCompareCanvas(CanvasInteractionMixin, QWidget):
         self.update()
 
     def clear_group(self) -> None:
+        self.cancel_interaction()
         self._snapshot = None
         self.update()
 
@@ -70,5 +75,6 @@ class SoftwareCompareCanvas(CanvasInteractionMixin, QWidget):
                 self.annotations,
                 self._annotation_preview,
             )
+            self._paint_swap_feedback(painter)
         finally:
             painter.end()

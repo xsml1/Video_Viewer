@@ -1,5 +1,35 @@
 # 验收状态（A01–A23）
 
+## 2026-10-13：追加工作区全屏
+
+用户明确授权A20中的全屏单项，并要求先将当前功能同步原GitHub仓库，再执行剩余自检/验证。此前已执行的结果保留；以下不把尚未构建的全屏包宣称通过。
+
+- 本机源码原生GL：reports/artifacts/fullscreen-native-gl-delivery-20261013/result.json，退出0；屏幕/画布/framebuffer1920×1080、DPR1，同canvas/transport/decoder/完整帧组保留。Space播放暂停、左右真实帧标识、Ctrl滚轮联动、Esc/F11/右上×退出与恢复通过，混合截图/导出及输入SHA不变。源48文件摘要8377BD7BD97CD17CC4C02FDB911E2328359B688A70832C99909D6730BDA7CA82；截图native-gl-fullscreen.png。
+- 全屏GUI与相关21项通过/4.10s，reports/fullscreen_gui_tests_20261013.log，退出0；覆盖正常/最大化/隐藏侧栏恢复、模态隔离、ROI、关闭释放。新增动态标注完成后隐藏恢复的回归待同步后执行。
+- 源码进程自检两种输入均含真实全屏/×恢复相位，输出fullscreen=True normal_restore=True；reports/fullscreen_source_mixed_selftest_20261013.log、fullscreen_source_image_selftest_20261013.log，退出0。
+- 全屏最终Windows包及完整最终回归尚待同步后运行。下方226项/9702A6包是增加全屏前的已验证混合版本；M9其余P2仍范围外，高DPI/跨屏与异机继续未验证。
+
+## 2026-10-12–13：文件夹浏览与混合工作区
+
+本轮按用户新要求替换右侧操作栏、取消图像/视频模式分类、直接拖拽交换并使Space独占播放/暂停。Windows 11 x64（build26200）、CPython3.11.16、PySide6/Qt6.11.2、PyAV16.1.0、FFmpeg/ffprobe9.0.1。测试基于 `ca06178b7fd3131db677dc6223291ccb8dccbda0` 的未提交工作树；`src/**/*.py`48文件摘要 **CD901E5A2ABFEFF1B2EA739F8BB915B93CAEE7EB0CD8F8092E8B120B3B700259**。下方历史结果不代表本版。
+
+| 项目 | 状态 | 本轮实际验证、预期及证据 |
+|---|---|---|
+| U13 文件夹浏览（A01/A02） | 已验证通过（本机） | 真实中文/空格目录：双击进入下级/媒体添加，上级/后退/前进/刷新/路径输入/选择取消；源文件只读，旧栏所有控件不可见。`tests/gui/test_file_browser.py`6项通过；原生鼠标操作见下列GL工具。目录操作为导航，不进行磁盘重命名/移动/删除。 |
+| U14 混合工作区（A01–A07/A16） | 已验证通过（本机） | PNG+带帧ID的真实H.264 B帧视频混合，总计最多6路；后台完成顺序仍按导入顺序；视频播放/步进时图像对象和RGB不变，不缩短公共区间。移除最后视频保留图片并拒绝旧transport；首组GL失败后软件显示同一完整组。`tests/gui/test_mixed_workspace.py`6项通过，原生主流程退出0。 |
+| U15 拖拽交换（A08/A09/A11/A16） | 已验证通过（本机） | 实际跨格鼠标拖放交换，仅改变排列，decoder、请求、帧、基准、视图不变。同格/中键平移保留，ROI/标注优先；阈值/Esc/返回原格/离开/布局变化取消。`tests/gui/test_pane_swap.py`11项通过，原生GL截图与行为断言退出0。 |
+| U16 Space独占（A03/A06） | 已验证通过（本机） | 按钮/输入框/目录树焦点下只播放暂停，不触发按钮、不输入空格、不添加素材；autoRepeat忽略，模态窗口隔离。GUI及原生工具通过。纯图像播放禁用，方向键文字编辑保留。 |
+| A14 混合截图/导出 | 已验证通过（本机） | 固定第18UI帧（source ID17）后截图再播放，PNG/JSON仍为固定组，视频PTS/帧身份与像素一致、图像标明static、media_kind=mixed。对比图1078×302/无JSON，输入SHA不变。`reports/artifacts/mixed-native-gl-delivery-20261013/frames/`、`view/`、`mixed-comparison.png`。 |
+| A19 GL/软件回退 | 已验证通过（本机所测） | 原生单QOpenGLWidget，DPR1/framebuffer1080×678，角落标签1252绿色像素。模拟首次上传失败的软件回退保留完整真实帧/顺序/视图/decoder，截图可保存。Qt `QWidget.grab()`漏GL叠加，`window-qt-widget-grab.png`只证外壳/目录；画布证据用独立`native-gl-mixed-swapped.png`及实际产品截图。 |
+| A18 索引关闭 | 已验证通过（专项） | SQLite每次连接独占并关闭，事务成功提交/异常回滚；保留强引用时仍能立即Windows rename/unlink；两个线程及真实H.264读写/reuse覆盖。连接/索引/运输22项专项通过。 |
+| A01–A09/A11–A16/A18/A23 既有回归 | 最终完整集运行中 | Ruff检查/格式退出0（97文件），`reports/workspace_ruff_20261013.log`。审查前快速全回归216 passed、2 deselected/43.71s，`reports/workspace_regression_20261013.log`。最终源码226项含两个100次开闭/替换循环正在执行，完成后替换本状态。 |
+| A22 新Windows包 | 本机包已验证，异机环境阻塞 | 构建退出0，`reports/build_workspace_20261013.log`；`dist/VideoCompare.dist/main.exe` SHA256 **9702A62658BC3F643033F22DEF0C67D4A6C9F6062D8F8F0A26F49EE64224AD99**。旧包保留`dist/VideoCompare.pre-folder-workspace-20261013/`。仅系统PATH独立进程实际PNG+H.264混合导入/定位/截图/导出退出0，`reports/package_mixed_workspace_20261013.log`和`reports/artifacts/package-mixed-workspace-20261013/`。随包自检实跑视频、图像、PQ/HLG、16位图像，退出0及CLEAN_WINDOWS_SELF_TEST_OK，`reports/clean_windows_workspace_20261013.log`。 |
+| A10/A17/A20–A21/A23 边界 | 环境阻塞/未重测/范围外 | 真实高DPI/跨屏、第二台干净Windows、实际系统主题变化仍未测；本轮未重测30分钟吞吐/6路4K持续实时。M9/P2仍范围外；此处工作区是同窗会话，不增加Workspace持久化。 |
+
+原生验收：`.venv/Scripts/python.exe tools/verify_mixed_workspace.py --ffprobe <ffprobe.exe> --output reports/artifacts/mixed-native-gl-delivery-20261013`，退出0，`reports/mixed_native_gl_delivery_20261013.log`及目录中的`result.json`。测试输入为本地生成PNG和带可识别帧ID的压缩视频，不读写用户原件；大型素材、缓存、报告日志和发布包按忽略规则只留本机。
+
+构建缺少dumpbin时跳过Qt依赖探测并警告，不影响本次构建；上述实际独立程序与随包自检证明本机所测流程可运行，不能替代另一台干净机器验收。
+
 ## 2026-10-01：视频/图像格式、HDR 与本机发布验证
 
 本节更新本次受影响项；后文 9 月记录为历史版本。平台 Windows 11 x64、Python 3.11.16、PySide6 6.11.2、PyAV 16.1.0（wheel FFmpeg 库）、CLI FFmpeg/ffprobe 9.0.1；Pillow 12.3.0、pillow-heif 1.8.0、rawpy 0.27.1、imagecodecs 2026.3.6、tifffile 2025.5.10。Git 测试起点 `5ef2839`，实现和证据测试时为未提交变更。

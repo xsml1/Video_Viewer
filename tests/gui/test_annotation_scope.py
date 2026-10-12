@@ -95,7 +95,6 @@ def test_local_rectangle_and_pen_stay_in_their_panes_and_export(
     qtbot.addWidget(window)
     window.show()
     if media_kind == "image":
-        window._media_mode.setCurrentIndex(1)
         first, second = tmp_path / "first.png", tmp_path / "second.png"
         Image.new("RGB", (320, 180), (25, 40, 60)).save(first)
         Image.new("RGB", (320, 180), (60, 40, 25)).save(second)
