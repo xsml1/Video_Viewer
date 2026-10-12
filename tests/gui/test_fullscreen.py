@@ -308,3 +308,42 @@ def test_closing_fullscreen_releases_real_decoder_and_loader_workers(
     assert window._loader.join(timeout=0)
     assert window._image_loader.join(timeout=0)
     assert window._screenshot_worker.join(timeout=0)
+
+
+@pytest.mark.gui
+def test_async_annotation_export_finished_in_fullscreen_stays_hidden(
+    qtbot, fullscreen_window, tmp_path: Path
+) -> None:
+    window = fullscreen_window
+    target = tmp_path / "fullscreen-completed.png"
+    window.start_annotation_export(target)
+    assert window._annotation_bar.isVisible()
+    window._finish_annotation_export()
+    window.set_workspace_fullscreen(True)
+    qtbot.waitUntil(
+        lambda: target.exists() and window._pending_annotated_export is None, timeout=5000
+    )
+    assert not window._annotation_bar.isVisible()
+    assert not window.canvas.annotating
+    window.set_workspace_fullscreen(False)
+    assert not window._annotation_bar.isVisible()
+    assert not window.canvas.annotating
+    with Image.open(target) as exported:
+        assert exported.size[0] > 0
+
+
+@pytest.mark.gui
+def test_fullscreen_auxiliary_ui_updates_remain_hidden_until_exit(
+    qtbot, fullscreen_window, tmp_path: Path
+) -> None:
+    window = fullscreen_window
+    window.set_workspace_fullscreen(True)
+    window._pixel_mode_combo.setCurrentIndex(1)
+    window.start_annotation_export(tmp_path / "pending-annotation.png")
+    assert not window._pixel_notice.isVisible()
+    assert not window._annotation_bar.isVisible()
+    window.set_workspace_fullscreen(False)
+    assert window._pixel_notice.isVisible()
+    assert window._annotation_bar.isVisible()
+    assert window.canvas.annotating
+    window._cancel_annotation_export()
